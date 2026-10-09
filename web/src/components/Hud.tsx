@@ -6,6 +6,7 @@ import { useVoice } from "@/hooks/useVoice";
 import type { JobRef, VideoRef } from "@/lib/ai/events";
 import { api, store } from "@/lib/client/api";
 import { Composer } from "./Composer";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { Orb, type OrbState } from "./Orb";
 import { ActivityPanel, StatusPanel, type Activity } from "./Panels";
 import { Player } from "./Player";
@@ -180,73 +181,79 @@ export function Hud({ initial }: { initial: string }) {
         pendingApprovals={pendingApprovals}
         initial={initial}
       />
-      {view === "chat" ? (
-        <main className="hud">
-          <StatusPanel
-            pulse={pulse}
-            level={voice.level}
-            voice={{ listen: voice.supported.listen, state: voice.listening ? "Listening" : voice.speaking ? "Speaking" : "Ready" }}
-            activeProvider={provider}
-            toolCount={pulse?.toolCount ?? 0}
-          />
-          <section className={`center ${compact ? "compact" : ""}`}>
-            <div className="hero">
-              <Orb state={orbState} level={voice.level} size={compact ? 132 : 300} onClick={onOrb} />
-              {!compact && (
-                <>
-                  <h1 className="wordmark big">J.A.R.V.I.S.</h1>
-                  <p className="subtitle">{subtitle}</p>
-                </>
-              )}
-            </div>
-            {compact && (
-              <Transcript
-                items={chat.items}
-                jobStatus={jobStatus}
-                onPlay={(v) => {
-                  setVideo(v);
-                  setPlayerOpen(true);
-                }}
-                onDecide={decide}
-                onOpenJob={(id) => {
-                  setFocusJob(id);
-                  setView("tasks");
-                }}
-              />
-            )}
-            {voice.error && <p className="err small center-text">{voice.error}</p>}
-            <Composer
-              onSend={(t) => {
-                interacted.current = true;
-                viaVoice.current = false;
-                chat.send(t);
-              }}
-              onMic={onOrb}
-              onStop={chat.stop}
-              busy={chat.busy}
-              listening={voice.listening}
-              interim={voice.interim}
-              canListen={voice.supported.listen}
-              compact={compact}
+      <ErrorBoundary resetKey={view} label={view[0].toUpperCase() + view.slice(1)}>
+        {view === "chat" ? (
+          <main className="hud">
+            <StatusPanel
+              pulse={pulse}
+              level={voice.level}
+              voice={{ listen: voice.supported.listen, state: voice.listening ? "Listening" : voice.speaking ? "Speaking" : "Ready" }}
+              activeProvider={provider}
+              toolCount={pulse?.toolCount ?? 0}
             />
-          </section>
-          <ActivityPanel activity={activity} onQuick={quick} />
-        </main>
-      ) : view === "apps" ? (
-        <AppsView
-          command={appCommand}
-          onCommand={(url) => setAppCommand({ url, n: Date.now() })}
-          onYouTube={() => setPlayerOpen(true)}
-          notify={notify}
-        />
-      ) : view === "tasks" ? (
-        <TasksView focusId={focusJob} onFocus={setFocusJob} onChanged={refresh} notify={notify} />
-      ) : view === "memory" ? (
-        <MemoryView notify={notify} />
-      ) : (
-        <SettingsView notify={notify} onChange={refresh} />
+            <section className={`center ${compact ? "compact" : ""}`}>
+              <div className="hero">
+                <Orb state={orbState} level={voice.level} size={compact ? 132 : 300} onClick={onOrb} />
+                {!compact && (
+                  <>
+                    <h1 className="wordmark big">J.A.R.V.I.S.</h1>
+                    <p className="subtitle">{subtitle}</p>
+                  </>
+                )}
+              </div>
+              {compact && (
+                <Transcript
+                  items={chat.items}
+                  jobStatus={jobStatus}
+                  onPlay={(v) => {
+                    setVideo(v);
+                    setPlayerOpen(true);
+                  }}
+                  onDecide={decide}
+                  onOpenJob={(id) => {
+                    setFocusJob(id);
+                    setView("tasks");
+                  }}
+                />
+              )}
+              {voice.error && <p className="err small center-text">{voice.error}</p>}
+              <Composer
+                onSend={(t) => {
+                  interacted.current = true;
+                  viaVoice.current = false;
+                  chat.send(t);
+                }}
+                onMic={onOrb}
+                onStop={chat.stop}
+                busy={chat.busy}
+                listening={voice.listening}
+                interim={voice.interim}
+                canListen={voice.supported.listen}
+                compact={compact}
+              />
+            </section>
+            <ActivityPanel activity={activity} onQuick={quick} />
+          </main>
+        ) : view === "apps" ? (
+          <AppsView
+            command={appCommand}
+            onCommand={(url) => setAppCommand({ url, n: Date.now() })}
+            onYouTube={() => setPlayerOpen(true)}
+            notify={notify}
+          />
+        ) : view === "tasks" ? (
+          <TasksView focusId={focusJob} onFocus={setFocusJob} onChanged={refresh} notify={notify} />
+        ) : view === "memory" ? (
+          <MemoryView notify={notify} />
+        ) : (
+          <SettingsView notify={notify} onChange={refresh} />
+        )}
+      </ErrorBoundary>
+      {playerOpen && (
+        <ErrorBoundary resetKey={video?.id} label="The player">
+          <Player video={video} onPlay={setVideo} onClose={() => setPlayerOpen(false)} />
+        </ErrorBoundary>
       )}
-      {playerOpen && <Player video={video} onPlay={setVideo} onClose={() => setPlayerOpen(false)} />}
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
     </div>
   );

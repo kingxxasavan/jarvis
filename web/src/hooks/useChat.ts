@@ -16,7 +16,7 @@ export type ChatItem = {
   error?: string;
 };
 
-type Saved = { id: string; role: "user" | "assistant"; content: string; meta?: { tools?: ToolChip[]; jobs?: JobRef[]; play?: VideoRef; provider?: string } };
+type Saved = { id: string; role: "user" | "assistant"; content: string | null; meta?: { tools?: (Omit<ToolChip, "id"> & { id?: string })[]; jobs?: JobRef[]; play?: VideoRef; provider?: string } };
 
 const CONV_KEY = "jarvis.conversation";
 const uid = () => Math.random().toString(36).slice(2);
@@ -43,7 +43,9 @@ export function useChat(handlers: {
         if (!c) return store.set(CONV_KEY, null);
         conversation.current = c.id;
         setItems(messages.map((m) => ({
-          id: m.id, role: m.role, text: m.content, tools: m.meta?.tools || [], jobs: m.meta?.jobs || [],
+          id: m.id, role: m.role, text: m.content || "", jobs: m.meta?.jobs || [],
+          // saved tool notes carry no id; the list needs one per chip
+          tools: (m.meta?.tools || []).map((c, i) => ({ ...c, id: c.id || `${m.id}-${i}` })),
           play: m.meta?.play, provider: m.meta?.provider,
         })));
       })

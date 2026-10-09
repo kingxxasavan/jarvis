@@ -9,6 +9,7 @@ export const metadata: Metadata = {
   title: "JARVIS",
   description: "Personal AI assistant",
   robots: { index: false, follow: false },
+  other: { google: "notranslate" },
   manifest: "/manifest.webmanifest",
   icons: { icon: "/icon.svg" },
 };
@@ -22,7 +23,9 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${display.variable} ${body.variable}`}>
+    // translate="no": browser translation rewrites the page's text behind React's back,
+    // which crashes the page on the next big update (such as switching tabs).
+    <html lang="en" translate="no" className={`${display.variable} ${body.variable}`}>
       <body>{children}</body>
     </html>
   );
