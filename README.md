@@ -113,21 +113,37 @@ cd ~\jarvis\agent
 py main.py pair PASTE-YOUR-CODE-HERE
 ```
 
-### Step 5: Claude Code and Codex (so JARVIS can build projects)
+### Step 5: Claude Code from the Claude desktop app (so JARVIS can build projects)
+
+No API key needed: it runs on your Claude account. Install the Claude desktop app:
 
 ```powershell
-npm install -g @anthropic-ai/claude-code @openai/codex
+winget install -e --id Anthropic.Claude --accept-package-agreements
 ```
 
-```powershell
-claude.cmd auth login
-```
+Open **Claude** from the Start menu, sign in, and open its **Code** tab once (that downloads the Claude Code
+engine JARVIS uses). Then sign that engine in once; a browser window opens for your Claude account:
 
 ```powershell
+$claude = (Get-ChildItem "$env:APPDATA\Claude\claude-code\*\*\claude.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+& $claude auth login
+```
+
+Check it worked (`"loggedIn": true`):
+
+```powershell
+& $claude auth status
+```
+
+The desktop app's own sign-in does not carry over to this, so the step above is needed once. It stays signed in
+when the app updates. JARVIS finds the newest copy by itself.
+
+Optional, Codex (uses your ChatGPT account, also no API key):
+
+```powershell
+npm install -g @openai/codex
 codex.cmd login
 ```
-
-Sign in with your Claude and ChatGPT accounts in the browser windows that open.
 
 ### Step 6: keep it awake 24/7
 
@@ -147,7 +163,7 @@ cd ~\jarvis\agent
 py main.py doctor
 ```
 
-You want `connection OK`, and a path (not "not installed") for chrome, cloudflared, codex and claude.
+You want `connection OK`, and a path (not "not installed") for chrome, cloudflared and claude. Codex only if you installed it.
 
 ### Step 8: start with Windows, and start now
 
@@ -212,7 +228,9 @@ Start-Process .venv\Scripts\pythonw.exe -ArgumentList "main.py","run" -WorkingDi
 | --- | --- |
 | `connection FAILED: ... removed or its token is wrong` | Add the device again in Settings and redo Step 4. |
 | `cloudflared` or `chrome` not installed | Redo its line from Step 1, then open a new Terminal. |
-| `running scripts is disabled` | Use `claude.cmd` / `codex.cmd` exactly as written above. |
+| `running scripts is disabled` | Use `codex.cmd` exactly as written above. |
+| No `claude-code` folder found in Step 5 | Open the Claude app's Code tab once, wait for it to load, then rerun Step 5. |
+| A build fails with a sign-in error | Rerun the two lines of Step 5 (`auth login`). |
 | Apps tab says no device is streaming | Check the agent window shows `apps are reachable at https://...`. |
 | Nothing works after a Windows Update restart | The agent starts when you sign in to Windows. Sign in once. |
 
