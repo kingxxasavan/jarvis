@@ -117,6 +117,8 @@ automatically. For a fixed address on your own domain, create a tunnel in the Cl
 `agent/.env`. For VS Code, run `code tunnel service install` once on the laptop and set `VSCODE_TUNNEL=<the
 machine name it shows>` in `agent/.env`. Set `JARVIS_STREAM=off` to disable streaming on a device.
 
+Step-by-step for a fresh Windows laptop: [docs/thinkpad-setup.md](docs/thinkpad-setup.md).
+
 `python main.py doctor` checks the connection and which coding tools it found. Projects are created in
 `~/JarvisProjects` (set `JARVIS_WORKSPACE` in `agent/.env` to change it). Logs are in `agent/data/agent.log`.
 
