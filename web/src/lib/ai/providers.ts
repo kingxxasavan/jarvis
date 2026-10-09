@@ -10,6 +10,7 @@ import type {
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
 import { env } from "../env.ts";
+import { ToolTextGate } from "./toolText.ts";
 
 export type ProviderId = "nvidia" | "ollama";
 export type Message = ChatCompletionMessageParam;
@@ -101,6 +102,16 @@ async function streamOnce(p: Provider, opts: Parameters<typeof complete>[0]): Pr
   let text = "";
   let started = false;
   const calls = new Map<number, ToolCall>();
+  const gate = new ToolTextGate();
+  const show = (piece: string) => {
+    if (!piece) return;
+    if (!started) {
+      started = true;
+      opts.onProvider?.(p.id);
+    }
+    text += piece;
+    opts.onText?.(piece);
+  };
   try {
     const stream = await p.client.chat.completions.create(
       {
@@ -117,14 +128,7 @@ async function streamOnce(p: Provider, opts: Parameters<typeof complete>[0]): Pr
       bump();
       const delta = chunk.choices?.[0]?.delta;
       if (!delta) continue;
-      if (delta.content) {
-        if (!started) {
-          started = true;
-          opts.onProvider?.(p.id);
-        }
-        text += delta.content;
-        opts.onText?.(delta.content);
-      }
+      if (delta.content) show(gate.push(delta.content));
       for (const tc of delta.tool_calls ?? []) {
         const slot = calls.get(tc.index) ?? { id: "", name: "", arguments: "" };
         if (tc.id) slot.id = tc.id;
@@ -143,10 +147,13 @@ async function streamOnce(p: Provider, opts: Parameters<typeof complete>[0]): Pr
   } finally {
     clearTimeout(timer);
   }
+  const leftover = gate.finish();
+  show(leftover.rest);
   if (!started) opts.onProvider?.(p.id);
   const toolCalls = [...calls.values()]
     .filter((c) => c.name)
-    .map((c, i) => ({ ...c, id: c.id || `call_${Date.now().toString(36)}_${i}` }));
+    .map((c, i) => ({ ...c, id: c.id || `call_${Date.now().toString(36)}_${i}` }))
+    .concat(opts.tools?.length ? leftover.calls : []);
   if (!text.trim() && !toolCalls.length) throw new Error(`${p.label} returned an empty answer`);
   return { text, toolCalls, provider: p.id };
 }

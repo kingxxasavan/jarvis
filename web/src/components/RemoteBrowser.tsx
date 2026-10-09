@@ -5,7 +5,42 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
 
-export type StreamConn = { ws: string; base: string; files: string; vscode: string; device: { id: string; name: string } };
+export type StreamConn = { ws: string; desktop?: string; base: string; files: string; vscode: string; device: { id: string; name: string } };
+export type StreamMode = "browser" | "desktop";
+
+type AudioCtor = typeof AudioContext;
+
+// Web Audio, with the older Safari name, and on iPhone/iPad the "playback"
+// session so the sound is not muted by the ring/silent switch.
+function makeAudio(): AudioContext | null {
+  const w = window as unknown as { AudioContext?: AudioCtor; webkitAudioContext?: AudioCtor };
+  const Ctor = w.AudioContext || w.webkitAudioContext;
+  if (!Ctor) return null;
+  try {
+    const nav = navigator as unknown as { audioSession?: { type: string } };
+    if (nav.audioSession) nav.audioSession.type = "playback";
+  } catch {
+    // older browsers
+  }
+  try {
+    return new Ctor({ latencyHint: "interactive" });
+  } catch {
+    return new Ctor();
+  }
+}
+
+// Decodes a JPEG frame. createImageBitmap is fastest; older Safari falls back to an <img>.
+async function decode(blob: Blob): Promise<{ img: CanvasImageSource; w: number; h: number; done: () => void }> {
+  if (typeof createImageBitmap === "function") {
+    const bmp = await createImageBitmap(blob);
+    return { img: bmp, w: bmp.width, h: bmp.height, done: () => bmp.close() };
+  }
+  const url = URL.createObjectURL(blob);
+  const img = new Image();
+  img.src = url;
+  await img.decode();
+  return { img, w: img.naturalWidth, h: img.naturalHeight, done: () => URL.revokeObjectURL(url) };
+}
 type Tab = { id: string; title: string; url: string; active: boolean };
 type Status = "connecting" | "live" | "closed";
 
@@ -20,9 +55,11 @@ function mods(e: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey
   return (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
 }
 
-export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }: {
+export function RemoteBrowser({ conn, mode = "browser", command, onCommandDone, onReconnect, onDownload, notify }: {
   conn: StreamConn;
+  mode?: StreamMode;
   command: { url: string; n: number } | null;
+  onCommandDone: () => void;
   onReconnect: () => void;
   onDownload: () => void;
   notify: (title: string, body?: string, tone?: "ok" | "err") => void;
@@ -38,6 +75,8 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
   const editingUrl = useRef(false);
   const touch = useRef<{ x: number; y: number; sx: number; sy: number } | null>(null);
   const retries = useRef(0);
+  const heard = useRef(0);
+  const desktop = mode === "desktop";
   const [status, setStatus] = useState<Status>("connecting");
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [address, setAddress] = useState("");
@@ -55,17 +94,17 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
     }
     decoding.current = true;
     try {
-      const bmp = await createImageBitmap(blob);
+      const frame = await decode(blob);
       const c = canvas.current;
       const g = c?.getContext("2d");
       if (c && g) {
-        if (c.width !== bmp.width || c.height !== bmp.height) {
-          c.width = bmp.width;
-          c.height = bmp.height;
+        if (c.width !== frame.w || c.height !== frame.h) {
+          c.width = frame.w;
+          c.height = frame.h;
         }
-        g.drawImage(bmp, 0, 0);
+        g.drawImage(frame.img, 0, 0);
       }
-      bmp.close();
+      frame.done();
     } catch {
       // a corrupt frame is skipped
     } finally {
@@ -81,7 +120,10 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
     if (!a) return;
     // Copy past the 1-byte header: an Int16Array cannot start at an odd byte offset.
     const pcm = new Int16Array(buf.slice(1, 1 + ((buf.byteLength - 1) & ~1)));
-    const ab = a.ctx.createBuffer(1, pcm.length, 24000);
+    if (!pcm.length) return;
+    heard.current = Date.now();
+    if (a.ctx.state === "suspended") void a.ctx.resume();
+    const ab = a.ctx.createBuffer(1, pcm.length, 24000); // the context resamples to its own rate
     const ch = ab.getChannelData(0);
     for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
     const src = a.ctx.createBufferSource();
@@ -93,6 +135,16 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
     a.next += ab.duration;
   }, []);
 
+  // The laptop screen is shrunk to fit what is asked for. A phone-sized panel
+  // would make it unreadable, so desktop pictures are at least 1280 wide
+  // (pinch-zoom or full screen to read them).
+  const viewMsg = () => {
+    const { w, h } = view.current;
+    if (!desktop) return { type: "view", width: w, height: h, ...QUALITY[quality] };
+    const k = Math.max(1, 1280 / w, Math.min(window.devicePixelRatio || 1, 2));
+    return { type: "view", width: Math.round(w * k), height: Math.round(h * k), ...QUALITY[quality] };
+  };
+
   const measure = () => {
     const r = wrap.current?.getBoundingClientRect();
     if (r && r.width > 0) view.current = { w: Math.max(320, Math.floor(r.width)), h: Math.max(240, Math.floor(r.height)) };
@@ -101,7 +153,13 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
   // Connection. Each conn carries a fresh pass; a new conn object means a new socket.
   useEffect(() => {
     measure();
-    const socket = new WebSocket(conn.ws);
+    const url = desktop ? conn.desktop : conn.ws;
+    if (!url) {
+      setStatus("closed");
+      notify("Desktop streaming needs the updated agent", "On the laptop: git pull, then py main.py setup, then restart the agent.", "err");
+      return;
+    }
+    const socket = new WebSocket(url);
     socket.binaryType = "arraybuffer";
     ws.current = socket;
     let retryTimer = 0;
@@ -109,7 +167,7 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
     socket.onopen = () => {
       retries.current = 0;
       setStatus("live");
-      socket.send(JSON.stringify({ type: "view", width: view.current.w, height: view.current.h, ...QUALITY[quality] }));
+      socket.send(JSON.stringify(viewMsg()));
       if (audio.current) socket.send(JSON.stringify({ type: "audio", on: true }));
     };
     socket.onmessage = (ev) => {
@@ -136,7 +194,11 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
       } else if (m.type === "clipboard" && m.text) {
         void navigator.clipboard?.writeText(String(m.text)).catch(() => undefined);
       } else if (m.type === "error") {
-        notify("Browser", String(m.message), "err");
+        notify(desktop ? "Desktop" : "Browser", String(m.message), "err");
+      } else if (m.type === "notice") {
+        notify(String(m.message), undefined, "ok");
+      } else if (m.type === "status" && m.message) {
+        notify(desktop ? "Desktop" : "Browser", String(m.message));
       }
     };
     socket.onclose = () => {
@@ -158,7 +220,7 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
     };
     // quality is applied through the "view" message, not by reconnecting
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn, draw, playAudio, notify, onDownload, onReconnect]);
+  }, [conn, desktop, draw, playAudio, notify, onDownload, onReconnect]);
 
   // Keep the remote page the same size as the panel.
   useEffect(() => {
@@ -170,7 +232,7 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
       timer = window.setTimeout(() => {
         const r = el.getBoundingClientRect();
         view.current = { w: Math.max(320, Math.floor(r.width)), h: Math.max(240, Math.floor(r.height)) };
-        send({ type: "view", width: view.current.w, height: view.current.h, ...QUALITY[quality] });
+        send(viewMsg());
       }, 250);
     });
     ro.observe(el);
@@ -178,16 +240,18 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
       ro.disconnect();
       clearTimeout(timer);
     };
-  }, [send, quality]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [send, quality, desktop]);
 
-  // Launcher commands wait until the connection is live, then run once each.
-  const done = useRef(0);
+  // Launcher commands wait until the connection is live, then run once. The
+  // parent clears the command right away, so coming back to Apps or
+  // reconnecting never replays it as another new tab.
   useEffect(() => {
-    if (status === "live" && command?.url && command.n !== done.current) {
-      done.current = command.n;
+    if (status === "live" && command?.url) {
       send({ type: "new_tab", url: command.url });
+      onCommandDone();
     }
-  }, [command, status, send]);
+  }, [command, status, send, onCommandDone]);
 
   useEffect(() => () => {
     void audio.current?.ctx.close();
@@ -202,17 +266,45 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
       setSound(false);
       return;
     }
-    const ctx = new AudioContext({ sampleRate: 24000 });
+    const ctx = makeAudio();
+    if (!ctx) {
+      notify("This browser cannot play streamed sound", undefined, "err");
+      return;
+    }
+    // Unlock audio inside the tap itself (iPhone and Chromebook both require it).
+    const blip = ctx.createBuffer(1, 1, 22050);
+    const src = ctx.createBufferSource();
+    src.buffer = blip;
+    src.connect(ctx.destination);
+    src.start(0);
     void ctx.resume();
     audio.current = { ctx, next: 0 };
+    heard.current = 0;
     send({ type: "audio", on: true });
     setSound(true);
+    window.setTimeout(() => {
+      if (audio.current?.ctx === ctx && !heard.current) {
+        notify("No sound is arriving yet", "Play something on the laptop. If it stays silent, check the agent log for 'audio capture'.", "err");
+      }
+    }, 6000);
   };
 
   // Input --------------------------------------------------------------------------
 
+  // Browser mode: the remote page is the panel's size, so panel pixels map 1:1.
+  // Desktop mode: the screen picture is letterboxed inside the panel, so the
+  // pointer is sent as a fraction of the picture (nx, ny).
   const point = (e: { clientX: number; clientY: number }) => {
-    const r = canvas.current!.getBoundingClientRect();
+    const c = canvas.current!;
+    const r = c.getBoundingClientRect();
+    if (desktop) {
+      const scale = Math.min(r.width / (c.width || 1), r.height / (c.height || 1));
+      const w = c.width * scale;
+      const h = c.height * scale;
+      const nx = (e.clientX - r.left - (r.width - w) / 2) / w;
+      const ny = (e.clientY - r.top - (r.height - h) / 2) / h;
+      return { x: 0, y: 0, nx: Math.min(1, Math.max(0, nx)), ny: Math.min(1, Math.max(0, ny)) };
+    }
     return { x: ((e.clientX - r.left) * view.current.w) / r.width, y: ((e.clientY - r.top) * view.current.h) / r.height };
   };
 
@@ -248,7 +340,19 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
     if (e.pointerType === "touch") {
       const t = touch.current;
       if (!t) return;
-      send({ type: "mouse", kind: "wheel", ...point(e), dx: (t.x - e.clientX) * 1.5, dy: (t.y - e.clientY) * 1.5, mods: 0 });
+      const first = !wheel.current;
+      const cur = wheel.current ?? { msg: {}, dx: 0, dy: 0 };
+      cur.msg = { type: "mouse", kind: "wheel", ...point(e), mods: 0 };
+      cur.dx += (t.x - e.clientX) * 1.5;
+      cur.dy += (t.y - e.clientY) * 1.5;
+      wheel.current = cur;
+      if (first) {
+        requestAnimationFrame(() => {
+          const w = wheel.current;
+          wheel.current = null;
+          if (w) send({ ...w.msg, dx: w.dx, dy: w.dy });
+        });
+      }
       touch.current = { ...t, x: e.clientX, y: e.clientY };
       return;
     }
@@ -270,11 +374,27 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
     send({ type: "mouse", kind: "up", ...point(e), button: e.button, buttons: e.buttons, clicks: e.detail || 1, mods: mods(e) });
   };
 
+  // Wheel events arrive many times per frame; they are added up and sent once
+  // per screen refresh, so a scroll never queues behind itself.
+  const wheel = useRef<{ msg: Record<string, unknown>; dx: number; dy: number } | null>(null);
+  const pointRef = useRef(point);
+  pointRef.current = point;
   const onWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
-    const r = canvas.current!.getBoundingClientRect();
-    send({ type: "mouse", kind: "wheel", x: ((e.clientX - r.left) * view.current.w) / r.width, y: ((e.clientY - r.top) * view.current.h) / r.height,
-      dx: e.deltaX, dy: e.deltaY, mods: mods(e) });
+    const scale = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1;
+    const first = !wheel.current;
+    const cur = wheel.current ?? { msg: {}, dx: 0, dy: 0 };
+    cur.msg = { type: "mouse", kind: "wheel", ...pointRef.current(e), mods: mods(e) };
+    cur.dx += e.deltaX * scale;
+    cur.dy += e.deltaY * scale;
+    wheel.current = cur;
+    if (first) {
+      requestAnimationFrame(() => {
+        const w = wheel.current;
+        wheel.current = null;
+        if (w) send({ ...w.msg, dx: w.dx, dy: w.dy });
+      });
+    }
   }, [send]);
 
   useEffect(() => {
@@ -286,7 +406,7 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
   const onKey = (kind: "down" | "up") => (e: React.KeyboardEvent) => {
     const ctrl = e.ctrlKey || e.metaKey;
     if (ctrl && e.key.toLowerCase() === "v") return; // let the paste event carry the text
-    if (ctrl && e.key.toLowerCase() === "c" && kind === "down") {
+    if (!desktop && ctrl && e.key.toLowerCase() === "c" && kind === "down") {
       e.preventDefault();
       send({ type: "copy" });
       return;
@@ -305,7 +425,7 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
 
   return (
     <div className="rbrowser">
-      <div className="rtabs" role="tablist">
+      {!desktop && <div className="rtabs" role="tablist">
         {tabs.map((t) => (
           <div key={t.id} className={`rtab ${t.active ? "active" : ""}`} role="tab" aria-selected={t.active}>
             <button className="clip" onClick={() => send({ type: "switch_tab", id: t.id })} title={t.url}>{t.title || t.url || "New tab"}</button>
@@ -313,8 +433,11 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
           </div>
         ))}
         <button className="icon-btn" onClick={() => send({ type: "new_tab", url: "" })} aria-label="New tab" title="New tab"><Icon name="plus" size={14} /></button>
-      </div>
+      </div>}
       <div className="rtoolbar">
+        {desktop ? (
+          <span className="grow muted small rdesk-label"><Icon name="device" size={14} /> {conn.device.name} screen</span>
+        ) : (<>
         <button className="icon-btn" onClick={() => send({ type: "back" })} aria-label="Back" title="Back"><Icon name="back" size={15} /></button>
         <button className="icon-btn" onClick={() => send({ type: "forward" })} aria-label="Forward" title="Forward"><Icon name="forward" size={15} /></button>
         <button className="icon-btn" onClick={() => send({ type: "reload" })} aria-label="Reload" title="Reload"><Icon name="reload" size={15} /></button>
@@ -323,6 +446,7 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
           <input value={address} onChange={(e) => setAddress(e.target.value)} onFocus={(e) => { editingUrl.current = true; e.target.select(); }}
             onBlur={() => { editingUrl.current = false; }} placeholder="Search or type a web address" aria-label="Address" spellCheck={false} />
         </form>
+        </>)}
         <button className={`icon-btn ${sound ? "on" : ""}`} onClick={toggleSound} title={sound ? "Sound on" : "Sound off"} aria-label="Toggle sound">
           <Icon name={sound ? "speaker" : "mute"} size={15} />
         </button>
@@ -345,7 +469,7 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
           onKeyDown={onKey("down")}
           onKeyUp={onKey("up")}
           onPaste={onPaste}
-          aria-label={`Browser on ${conn.device.name}${active ? `: ${active.title}` : ""}`}
+          aria-label={desktop ? `${conn.device.name} screen` : `Browser on ${conn.device.name}${active ? `: ${active.title}` : ""}`}
         />
         <input
           ref={keyboard}
@@ -367,7 +491,7 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
         {status !== "live" && (
           <div className="roverlay">
             {status === "connecting" ? (
-              <p><i className="spin" /> Connecting to {conn.device.name}...</p>
+              <p><i className="spin" /> Connecting to {conn.device.name}{desktop ? "'s screen" : ""}...</p>
             ) : (
               <>
                 <p>The connection to {conn.device.name} closed.</p>

@@ -69,7 +69,9 @@ def check_draft(path: Path, name: str) -> dict[str, Any]:
 
 
 class Plugins:
-    def __init__(self, codex_bin: str, claude_bin: str, builtin_names: Callable[[], set[str]], reload: Callable[[], None]):
+    def __init__(self, codex_bin: str, claude_bin: str, builtin_names: Callable[[], set[str]], reload: Callable[[], None],
+                 save: Callable[..., None] | None = None):
+        self.save = save
         self.codex_bin = codex_bin
         self.claude_bin = claude_bin
         self.builtin_names = builtin_names
@@ -89,8 +91,8 @@ class Plugins:
         if len(purpose) < 15:
             raise ValueError("Describe what the tool should do.")
         tools = available(self.codex_bin, self.claude_bin)
-        wanted = str(args.get("agent") or "codex").lower()
-        agent = next((a for a in [wanted, "codex", "claude"] if tools.get(a)), None)
+        wanted = str(args.get("agent") or "claude").lower()
+        agent = next((a for a in [wanted, "claude", "codex"] if tools.get(a)), None)
         if not agent:
             raise RuntimeError("Building a plugin needs Codex or Claude Code installed on this device.")
 
@@ -106,12 +108,26 @@ class Plugins:
             raise RuntimeError(f"{agent} did not produce plugin.py. {result.error or result.summary}"[:800])
         verdict = check_draft(file, name)
         ctx.log("log" if verdict["valid"] else "error", "Plugin loads cleanly." if verdict["valid"] else f"Plugin problem: {verdict['problem']}")
+        code = file.read_text(encoding="utf-8", errors="replace")[:60000]
+        saved = False
+        if self.save:
+            try:
+                self.save(str(args.get("_job_id") or ""), name, purpose[:600], code, bool(verdict["valid"]), verdict["problem"])
+                saved = True
+                ctx.log("log", "Code saved to the JARVIS database (Tasks > Tools).")
+            except Exception as exc:  # noqa: BLE001 - the draft is still on disk
+                ctx.log("error", f"Could not save the code to the database: {exc}")
         return {"name": name, "valid": verdict["valid"], "problem": verdict["problem"], "summary": result.summary,
-                "code": file.read_text(encoding="utf-8", errors="replace")[:60000]}
+                "code": code, "saved_to_database": saved, "agent": agent}
 
     def enable(self, args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
         name = self._name(args.get("name"))
         src = DRAFT_DIR / name / "plugin.py"
+        code = args.get("code")
+        if isinstance(code, str) and code.strip():
+            # Installing from the database (built on another device, or after a reinstall).
+            src.parent.mkdir(parents=True, exist_ok=True)
+            src.write_text(code, encoding="utf-8")
         if not src.exists():
             raise FileNotFoundError("There is no draft with that name. Build it first.")
         verdict = check_draft(src, name)
@@ -133,15 +149,17 @@ class Plugins:
         return [
             Tool(
                 "create_plugin",
-                "Teach JARVIS a new ability: Codex or Claude Code writes a small Python tool for this device. "
-                "Sir reviews the code on the Tasks page and enables it; until then it does nothing.",
+                "Build a missing ability: when no existing tool can do what Sir asks, Claude Code writes a small Python tool "
+                "for this device and its code is saved to the JARVIS database. Sir presses Enable on the card in chat to "
+                "switch it on; until then it does nothing.",
                 schema({
                     "name": {"type": "string", "description": "snake_case tool name, e.g. weather_alerts"},
                     "purpose": {"type": "string", "description": "What it does, its inputs and its output, in detail"},
-                    "agent": {"type": "string", "enum": ["codex", "claude"]},
+                    "agent": {"type": "string", "enum": ["claude", "codex"], "description": "Default claude"},
                 }, ["name", "purpose"]),
-                self.create, long_running=True, approval=True,
+                self.create, long_running=True,
             ),
-            Tool("enable_plugin", "Enable a reviewed plugin draft.", schema({"name": {"type": "string"}}, ["name"]), self.enable, hidden=True),
+            Tool("enable_plugin", "Enable a reviewed plugin draft.", schema({"name": {"type": "string"}, "code": {"type": "string"}}, ["name"]),
+                 self.enable, hidden=True),
             Tool("disable_plugin", "Disable a plugin.", schema({"name": {"type": "string"}}, ["name"]), self.disable, hidden=True),
         ]

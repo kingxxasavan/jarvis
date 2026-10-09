@@ -25,10 +25,36 @@ The website works on its own. When a device agent is online, Jarvis can also use
 | Your profile | Import `about_me_complete.json` once. Unconfirmed or old details are marked so Jarvis checks them with you instead of assuming. |
 | arkia.buzz | Calendar, tasks and reminders (read, add, tick off), friends' messages. Unread messages and due reminders pop up and are spoken while Jarvis is open. |
 | Projects | "Build me a ... on my laptop": Codex or Claude Code runs on the device, the log streams into Tasks, the result is committed to git, optionally pushed to a private GitHub repo. Needs your approval. |
-| New abilities | "Build yourself a tool that ...": Codex/Claude Code writes a plugin, it is import-checked, you read the code on the Tasks page and press Enable. Then every Jarvis surface can use it, with no redeploy. |
-| Apps (streamed) | The laptop's real Chrome, with its own logins, streamed into the **Apps** tab with sound: browse, use the Spotify web player, sites the school network blocks. Downloads land on the laptop and can be saved to whatever device you are on. VS Code opens through Microsoft's own VS Code tunnel. Runs through a Cloudflare Tunnel; each connection needs a short-lived pass from your signed-in JARVIS. |
+| New abilities | When Jarvis has no tool for something, it says so in chat and has Claude Code write one. The code is import-checked and saved to the database (Tasks > Tools Jarvis built). Press **Enable** on the card in chat; then every Jarvis surface can use it, with no redeploy. Saved tools can be installed on another device from the Tasks page. |
+| Apps (streamed) | **Browser**: the laptop's real Chrome, with its own logins, streamed into the **Apps** tab with sound: browse, use the Spotify web player, sites the school network blocks. **Desktop**: the whole laptop screen with mouse and keyboard, so every installed app works (the Claude desktop app, Explorer, Word...). The **Laptop apps** list opens any installed app. VS Code opens through Microsoft's own VS Code tunnel. Runs through a Cloudflare Tunnel; each connection needs a short-lived pass from your signed-in JARVIS. |
+| Files | The **Files** tab is a file manager for the laptop: browse Desktop, Documents, Downloads and more, view files in the page, download them to the device you are on, upload into any folder, or open them on the laptop. **Cloud files**: everything the laptop downloads (in the streamed Chrome or via Jarvis) is also copied to your Supabase storage, up to 50 MB a file, so it can be downloaded on any computer even when the laptop is off. Upload from any browser too, and send a cloud file back to the laptop. |
+| Code | The **Code** tab talks to Claude Code on the laptop directly: pick a folder (JARVIS's own code, a project, or any folder), type what to build or fix, watch the live log, and follow up in the same Claude Code conversation. Optionally commit and push. **Restart agent** and **Update from GitHub** load changes on the laptop without being there. |
+| Reading files | "What's in the spreadsheet I downloaded?": Jarvis reads xlsx, csv, Word, PowerPoint, PDF and text files on the laptop and answers in chat. |
 | Device control | Open apps, open pages, media/volume keys, system status, project files. Each action reports what it actually observed. |
 | Web | Live search and page reading through Ollama's web search API (same Ollama key). |
+
+## Updating an existing install (October 2026 update)
+
+This update adds the Files and Code tabs, Desktop streaming, cloud files and saved tools. Once:
+
+1. Supabase > SQL Editor: paste all of `supabase/schema.sql` again and Run. It adds the `cloud_files` and `plugins`
+   tables and the private `jarvis-files` storage bucket. Safe to re-run.
+2. Vercel redeploys by itself from GitHub.
+3. On the laptop (this is the last time you need to be there for an update):
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" | Where-Object CommandLine -like '*main.py*run*' | ForEach-Object { Stop-Process -Id $_.ProcessId }
+cd ~\jarvis
+git pull
+cd agent
+py main.py setup
+Start-Process .venv\Scripts\pythonw.exe -ArgumentList "main.py","run" -WorkingDirectory (Get-Location)
+```
+
+After that, **Code > Update from GitHub** pulls new JARVIS code onto the laptop and restarts the agent remotely.
+
+If the site ever shows "Something on this page crashed", the message is on screen and also in Vercel > your project >
+Logs (search for `client-error`), with the browser and the exact error.
 
 ## 1. Supabase (database and login)
 
@@ -176,6 +202,9 @@ Leave this window open while you test from your phone or Chromebook:
 - Apps tab: the laptop's Chrome appears. Click into the page to type; the speaker icon turns sound on. Sign in to
   Spotify and Google there once and they stay signed in.
 - Close the lid and check the Apps picture still moves. If it freezes, leave the lid slightly open.
+- Apps > **Desktop** shows the whole laptop screen. It needs Windows to be signed in and unlocked: the lock screen
+  cannot be captured or controlled. To stop it locking, Settings > Accounts > Sign-in options > "If you've been away,
+  when should Windows require you to sign in again?" > Never, and turn off the screen saver.
 
 When it works, close the window and run JARVIS hidden in the background:
 
@@ -235,6 +264,13 @@ Start-Process .venv\Scripts\pythonw.exe -ArgumentList "main.py","run" -WorkingDi
 - `JARVIS_WORKSPACE`: where projects are created (default `~\JarvisProjects`).
 - `JARVIS_DOWNLOADS`: where downloads go (default `~\Downloads\JARVIS`).
 - `JARVIS_STREAM=off`: turn app streaming off on this device.
+- `JARVIS_CLOUD=off`: do not copy downloads to cloud files. `JARVIS_CLOUD_MAX_MB=50`: the largest file copied
+  (Supabase's free plan allows 50 MB per file).
+- `JARVIS_AUDIO_DEVICE`: which output to stream sound from (default: the speakers). To hear streamed sound only on
+  the phone or Chromebook and keep the laptop silent: install the free VB-CABLE (vb-audio.com/Cable), then Windows
+  Settings > System > Sound > Volume mixer > set Chrome's output to "CABLE Input", and add
+  `JARVIS_AUDIO_DEVICE=CABLE Input` to `.env`. Tap the speaker icon in Apps to turn sound on (on an iPhone, the page
+  also plays with the silent switch on).
 - Fixed apps address on your own domain: create a Cloudflare tunnel pointing at `http://localhost:8788`, then set
   `CLOUDFLARE_TUNNEL_TOKEN=` and `STREAM_PUBLIC_URL=https://apps.yourdomain`.
 
@@ -279,8 +315,11 @@ web/src/lib/memory/        store + hybrid recall, adaptive learning, profile imp
 web/src/lib/arkia/         Firebase REST client, calendar recurrence (mirrors arkia's own rules)
 web/src/lib/youtube/       search / channel RSS / embeddability, watch history, Takeout parser
 web/src/app/api/           chat (streaming), pulse, memory, tasks, devices, arkia, youtube, conversations
-web/src/components/        HUD: orb, panels, transcript, composer, player, views
+web/src/components/        HUD: orb, panels, transcript, composer, player, views (chat, apps, files, code, tasks...)
 agent/main.py              setup | pair | run | doctor | autostart | test
 agent/jarvis_agent/        api (RPC), runner (job loop), registry (tools + plugins), coding (Codex/Claude)
-agent/jarvis_agent/tools/  system (apps, media, YouTube), projects (coding runs), plugins (self-extension)
+agent/jarvis_agent/tools/  system (apps, media, YouTube), files (folders, read_file), projects (coding runs, Code tab),
+                           plugins (self-extension), apps (streamed browser, downloads)
+agent/jarvis_agent/stream/ stream server: Chrome, desktop capture and input, sound, file manager routes, tunnel
+agent/jarvis_agent/cloud.py copies downloads to cloud files
 ```

@@ -20,6 +20,29 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type ToolNote = { name: string; label: string; state: "done" | "error"; note?: string };
 
+function sortKeys(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(sortKeys);
+  if (v && typeof v === "object") {
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([k, x]) => [k, sortKeys(x)]));
+  }
+  return v;
+}
+
+// Device tasks started from this conversation, with what they produced, so the
+// model knows a task already ran (and its result) instead of starting it again.
+async function conversationTasks(owner: Owner, conversationId: string): Promise<string> {
+  const { data } = await owner.sb.from("jobs").select("id, title, status, error, result, created_at")
+    .eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(6);
+  if (!data?.length) return "";
+  return data.reverse().map((j) => {
+    const r = (j.result || {}) as Record<string, unknown>;
+    const out = j.error ? `error: ${String(j.error).slice(0, 400)}`
+      : r.summary ? `result: ${String(r.summary).slice(0, 1500)}`
+      : j.result ? `result: ${JSON.stringify(j.result).slice(0, 1500)}` : "";
+    return `- [${j.status}] ${j.title} (task ${j.id})${out ? `\n  ${out.replace(/\n/g, "\n  ")}` : ""}`;
+  }).join("\n");
+}
+
 async function openConversation(owner: Owner, wanted: string | undefined, firstLine: string): Promise<string> {
   if (wanted && UUID.test(wanted)) {
     const { data } = await owner.sb.from("conversations").select("id").eq("id", wanted).maybeSingle();
@@ -55,18 +78,19 @@ export async function runTurn(
   const conversationId = await openConversation(owner, input.conversationId, message);
   emit({ t: "conv", id: conversationId });
 
-  const [history, coreMemories, relevant, devices, arkia] = await Promise.all([
+  const [history, coreMemories, relevant, devices, arkia, tasks] = await Promise.all([
     loadHistory(owner, conversationId),
     core(sb),
     recall(sb, message, 8),
     listDevices(sb),
     arkiaConnection(sb).catch(() => null),
+    conversationTasks(owner, conversationId),
   ]);
   await sb.from("messages").insert({ conversation_id: conversationId, role: "user", content: message });
 
   const box = toolbox(devices, { arkia: !!arkia });
   const messages: Message[] = [
-    { role: "system", content: systemPrompt({ ownerName, now, core: coreMemories, relevant, devices, arkiaConnected: !!arkia }) },
+    { role: "system", content: systemPrompt({ ownerName, now, core: coreMemories, relevant, devices, arkiaConnected: !!arkia, tasks }) },
     ...history,
     { role: "user", content: message },
   ];
@@ -87,7 +111,29 @@ export async function runTurn(
     },
   };
 
-  const runTool = async (call: ToolCall): Promise<string> => {
+  // The same call twice in one turn returns the first answer instead of
+  // running again; this is what stops a model from looping on one command.
+  const done = new Map<string, Promise<string>>();
+  const runTool = (call: ToolCall): Promise<string> => {
+    let key = call.name;
+    try {
+      key += JSON.stringify(sortKeys(JSON.parse(call.arguments || "{}")));
+    } catch {
+      key += call.arguments;
+    }
+    const earlier = done.get(key);
+    if (earlier) {
+      return earlier.then((r) => JSON.stringify({
+        note: "You already made this exact call in this turn. Its result is below; use it and answer instead of calling again.",
+        result: JSON.parse(r),
+      }));
+    }
+    const p = runToolOnce(call);
+    done.set(key, p);
+    return p;
+  };
+
+  const runToolOnce = async (call: ToolCall): Promise<string> => {
     const tool = box.byName.get(call.name);
     if (!tool) {
       return JSON.stringify({ error: `There is no tool called ${call.name}.`, available: [...box.byName.keys()] });

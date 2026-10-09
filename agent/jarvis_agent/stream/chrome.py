@@ -115,7 +115,9 @@ class Cdp:
 
 class ChromeBrowser:
     def __init__(self, profile_dir: Path, downloads_dir: Path, chrome_bin: str,
-                 send_frame: Callable[[bytes], Awaitable[None]], send_json: Callable[[dict], Awaitable[None]]):
+                 send_frame: Callable[[bytes], Awaitable[None]], send_json: Callable[[dict], Awaitable[None]],
+                 on_downloaded: Callable[[Path], None] | None = None):
+        self.on_downloaded = on_downloaded
         self.profile_dir = profile_dir
         self.downloads_dir = downloads_dir
         self.chrome_bin = chrome_bin
@@ -147,6 +149,14 @@ class ChromeBrowser:
                 return
             self.http = self.http or aiohttp.ClientSession()
             info = await self._version()
+            if not info and (self._alive() or await self._port_open()):
+                # Chrome is running but busy. Launching it again would only make the
+                # running copy open one more tab, so wait for it instead.
+                for _ in range(30):
+                    await asyncio.sleep(0.5)
+                    info = await self._version()
+                    if info:
+                        break
             if not info:
                 self._launch()
                 for _ in range(60):
@@ -161,10 +171,21 @@ class ChromeBrowser:
             asyncio.create_task(self._watch(self.cdp))
             await self._setup()
 
+    def _alive(self) -> bool:
+        return bool(self.proc and self.proc.poll() is None)
+
+    async def _port_open(self) -> bool:
+        try:
+            _, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", PORT), 1.5)
+        except (OSError, asyncio.TimeoutError):
+            return False
+        writer.close()
+        return True
+
     async def _version(self) -> dict | None:
         assert self.http
         try:
-            async with self.http.get(f"http://127.0.0.1:{PORT}/json/version", timeout=aiohttp.ClientTimeout(total=2)) as r:
+            async with self.http.get(f"http://127.0.0.1:{PORT}/json/version", timeout=aiohttp.ClientTimeout(total=5)) as r:
                 return await r.json()
         except (aiohttp.ClientError, asyncio.TimeoutError):
             return None
@@ -177,7 +198,7 @@ class ChromeBrowser:
         args = [exe, f"--remote-debugging-port={PORT}", f"--user-data-dir={self.profile_dir}",
                 "--no-first-run", "--no-default-browser-check", "--disable-backgrounding-occluded-windows",
                 "--disable-renderer-backgrounding", "--disable-background-timer-throttling",
-                "--autoplay-policy=no-user-gesture-required", "--window-size=1280,800", "https://www.google.com"]
+                "--autoplay-policy=no-user-gesture-required", "--window-size=1280,800"]
         log.info("starting Chrome for streaming")
         self.proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -195,7 +216,7 @@ class ChromeBrowser:
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
         await self.cdp.call("Target.setDiscoverTargets", {"discover": True})
         await self.cdp.call("Browser.setDownloadBehavior",
-                            {"behavior": "allow", "downloadPath": str(self.downloads_dir), "eventsEnabled": True})
+                            {"behavior": "allowAndName", "downloadPath": str(self.downloads_dir), "eventsEnabled": True})
         res = await self.cdp.call("Target.getTargets")
         for t in res.get("targetInfos", []):
             if t["type"] == "page":
@@ -246,10 +267,32 @@ class ChromeBrowser:
             self.downloads[params["guid"]] = {"name": params.get("suggestedFilename", "download"), "url": params.get("url", "")}
             asyncio.create_task(self.send_json({"type": "download", "name": self.downloads[params["guid"]]["name"], "state": "started"}))
         elif method == "Browser.downloadProgress":
-            d = self.downloads.get(params["guid"], {"name": "download"})
-            if params.get("state") in ("completed", "canceled"):
-                asyncio.create_task(self.send_json({"type": "download", "name": d["name"], "state": params["state"],
+            guid = params["guid"]
+            d = self.downloads.get(guid, {"name": "download"})
+            state = params.get("state")
+            if state == "completed":
+                # Chrome saved it under its guid ("allowAndName"); give it its real name.
+                final = self._finish_download(guid, d["name"])
+                d["name"] = final.name if final else d["name"]
+                if final and self.on_downloaded:
+                    self.on_downloaded(final)
+            if state in ("completed", "canceled"):
+                self.downloads.pop(guid, None)
+                asyncio.create_task(self.send_json({"type": "download", "name": d["name"], "state": state,
                                                     "bytes": params.get("totalBytes", 0)}))
+
+    def _finish_download(self, guid: str, suggested: str) -> Path | None:
+        from ..tools.apps import clean_name, unique_path
+
+        src = self.downloads_dir / guid
+        if not src.exists():
+            return None
+        target = unique_path(self.downloads_dir, clean_name(suggested or "download"))
+        try:
+            src.replace(target)
+        except OSError:
+            return src
+        return target
 
     async def _frame(self, params: dict, session: str) -> None:
         """Hands the frame to the viewers (who keep only the newest) and asks Chrome

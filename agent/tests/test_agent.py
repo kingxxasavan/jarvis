@@ -175,6 +175,7 @@ def test_runner_reports_success_and_failure():
     runner.running, runner.lock, runner.stop = set(), threading.Lock(), threading.Event()
     runner.manifest_dirty = threading.Event()
     runner._stream_pending = None
+    runner.restart_wanted = False
     threading.Thread(target=runner.loop, daemon=True).start()
     assert runner.api.done.wait(5)
     runner.stop.set()
@@ -272,3 +273,102 @@ def test_viewer_queue_keeps_sound_short_and_frames_newest():
         assert c.frame == FRAME + b"new"
 
     asyncio.run(run())
+
+
+# Reading files into chat ------------------------------------------------------------
+
+def test_read_file_turns_documents_into_text(tmp_path, monkeypatch):
+    import zipfile
+
+    import openpyxl
+
+    from jarvis_agent.tools import files
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Budget"
+    ws.append(["Item", "Cost, USD"])
+    ws.append(["Hosting", 12])
+    wb.save(tmp_path / "sheet.xlsx")
+    with zipfile.ZipFile(tmp_path / "doc.docx", "w") as z:
+        z.writestr("word/document.xml", "<w:document><w:p><w:t>First line</w:t></w:p><w:p><w:t>Second &amp; last</w:t></w:p></w:document>")
+    (tmp_path / ".env").write_text("SECRET=1")
+
+    f = files.Files(tmp_path)
+    sheet = f.read_file({"path": "sheet.xlsx"}, ctx())
+    assert sheet["sheets"][0]["name"] == "Budget"
+    assert 'Item,"Cost, USD"' in sheet["content"] and "Hosting,12" in sheet["content"]
+    assert f.read_file({"path": str(tmp_path / "doc.docx")}, ctx())["content"].split() == ["First", "line", "Second", "&", "last"]
+    with pytest.raises(PermissionError):
+        f.read_file({"path": str(tmp_path / ".env")}, ctx())
+    with pytest.raises(FileNotFoundError):
+        f.read_file({"path": "missing.xlsx"}, ctx())
+
+
+# Desktop, downloads and Claude Code sessions -----------------------------------------
+
+def test_desktop_pointer_maps_fractions_to_screen_pixels():
+    from jarvis_agent.stream.desktop import DesktopScreen
+
+    async def nothing(_):
+        return None
+
+    d = DesktopScreen(nothing, nothing)
+    d.monitor = {"left": -1920, "top": 0, "width": 1920, "height": 1080}
+    assert d._point({"nx": 0, "ny": 0}) == (-1920, 0)
+    assert d._point({"nx": 1, "ny": 1}) == (-1, 1079)
+    assert d._point({"nx": 5, "ny": -2}) == (-1, 0)
+
+
+def test_finished_chrome_download_gets_its_real_name(tmp_path):
+    from jarvis_agent.stream.chrome import ChromeBrowser
+
+    async def nothing(_):
+        return None
+
+    got = []
+    b = ChromeBrowser(tmp_path / "p", tmp_path, "", nothing, nothing, on_downloaded=got.append)
+    (tmp_path / "report.pdf").write_text("old")
+    (tmp_path / "1234").write_text("new")
+    final = b._finish_download("1234", "report.pdf")
+    assert final == tmp_path / "report (1).pdf" and final.read_text() == "new"
+    assert b._finish_download("missing", "x.pdf") is None
+
+
+def test_claude_session_id_is_captured():
+    from jarvis_agent.coding import session_of
+
+    assert session_of(json.dumps({"type": "system", "subtype": "init", "session_id": "abc-123"})) == "abc-123"
+    assert session_of(json.dumps({"type": "thread.started", "thread_id": "t-9"})) == "t-9"
+    assert session_of("not json") == ""
+
+
+def test_code_folders_resolve(tmp_path, monkeypatch):
+    from jarvis_agent.config import JARVIS_REPO
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    ws = Workspace(tmp_path / "JarvisProjects")
+    assert ws.folder("jarvis") == JARVIS_REPO
+    assert ws.folder("My Site") == tmp_path / "JarvisProjects" / "my-site"
+    (tmp_path / "Desktop" / "School").mkdir(parents=True)
+    assert ws.folder("Desktop/School") == (tmp_path / "Desktop" / "School").resolve()
+    with pytest.raises(PermissionError):
+        ws.folder(str(tmp_path / ".ssh"))
+
+
+def test_plugin_installs_from_saved_code(tmp_path, monkeypatch):
+    from jarvis_agent.tools import plugins
+
+    monkeypatch.setattr(plugins, "DRAFT_DIR", tmp_path / "drafts")
+    monkeypatch.setattr(plugins, "PLUGIN_DIR", tmp_path)
+    monkeypatch.setattr(reg, "PLUGIN_DIR", tmp_path)
+    monkeypatch.setattr(reg, "ENABLED_FILE", tmp_path / "enabled.json")
+    monkeypatch.setattr(plugins, "write_enabled", reg.write_enabled)
+    monkeypatch.setattr(plugins, "read_enabled", reg.read_enabled)
+    reloaded = []
+    p = plugins.Plugins("", "", builtin_names=lambda: set(), reload=lambda: reloaded.append(1))
+    code = 'TOOL = {"name": "say_hi", "description": "Says hello to someone.", "parameters": {"type": "object", "properties": {}}}\n' \
+           "def run(args):\n    return 'hi'\n"
+    assert p.enable({"name": "say_hi", "code": code}, ctx())["enabled"] == "say_hi"
+    assert (tmp_path / "say_hi.py").read_text() == code and reloaded

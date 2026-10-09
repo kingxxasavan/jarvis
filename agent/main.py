@@ -100,6 +100,11 @@ def cmd_run(_: argparse.Namespace) -> None:
     from jarvis_agent.config import Config
     from jarvis_agent.runner import Runner
 
+    delay = float(os.environ.pop("JARVIS_START_DELAY", "0") or 0)
+    if delay:  # restarted by the old process: let it release its ports first
+        import time
+
+        time.sleep(delay)
     setup_logging()
     log = logging.getLogger("jarvis")
     cfg = Config.load()
@@ -126,6 +131,11 @@ def cmd_run(_: argparse.Namespace) -> None:
     finally:
         runner.shutdown()
         log.info("stopped")
+    if runner.restart_wanted:
+        # A fresh process loads the updated code. Same interpreter, same mode.
+        flags = (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP) if IS_WIN else 0  # type: ignore[attr-defined]
+        subprocess.Popen([sys.executable, str(HERE / "main.py"), "run"], cwd=str(HERE), creationflags=flags,
+                         start_new_session=not IS_WIN, close_fds=True, env={**os.environ, "JARVIS_START_DELAY": "4"})
 
 
 def cmd_doctor(_: argparse.Namespace) -> None:
@@ -170,6 +180,8 @@ def cmd_doctor(_: argparse.Namespace) -> None:
     print(f"  vscode       {('vscode.dev/tunnel/' + cfg.vscode_tunnel) if cfg.vscode_tunnel else 'not set (VSCODE_TUNNEL)'}")
     print(f"  workspace    {cfg.workspace}")
     reg = build_registry(cfg)
+    print(f"  cloud files  {'on, up to ' + str(cfg.cloud_max_mb) + ' MB per file' if cfg.cloud_enabled else 'off (JARVIS_CLOUD=off)'}")
+    print(f"  audio from   {cfg.audio_device or 'default speakers'}")
     print(f"  abilities    {', '.join(t.name for t in reg.all())}")
     for name, problem in reg.errors.items():
         print(f"  plugin {name}: {problem}")

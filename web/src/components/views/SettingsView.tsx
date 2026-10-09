@@ -294,10 +294,16 @@ function Voice({ notify }: { notify: Notify }) {
       setVoice(pickVoice(list, store.get(VOICE_KEY))?.name || "");
     };
     load();
-    window.speechSynthesis?.addEventListener("voiceschanged", load);
+    const synth = window.speechSynthesis as (SpeechSynthesis & { addEventListener?: unknown }) | undefined;
+    const canListen = typeof synth?.addEventListener === "function";
+    if (canListen) synth!.addEventListener("voiceschanged", load);
+    else if (synth) synth.onvoiceschanged = load;
     setRate(Number(store.get(RATE_KEY)) || 1);
     setPerm("Notification" in window ? Notification.permission : "unsupported");
-    return () => window.speechSynthesis?.removeEventListener("voiceschanged", load);
+    return () => {
+      if (canListen) synth!.removeEventListener("voiceschanged", load);
+      else if (synth) synth.onvoiceschanged = null;
+    };
   }, []);
 
   const test = () => {

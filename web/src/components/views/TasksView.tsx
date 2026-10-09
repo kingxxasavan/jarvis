@@ -52,6 +52,71 @@ function Result({ job, onPlugin }: { job: Job; onPlugin: (action: "enable_plugin
   );
 }
 
+type Plugin = { id: string; name: string; description: string; code: string; valid: boolean; problem: string | null; enabled_on: string[]; updated_at: string };
+
+// Tools JARVIS built for itself (saved in the database), with their code.
+function SavedTools({ notify }: { notify: (title: string, body?: string, tone?: "ok" | "err") => void }) {
+  const [plugins, setPlugins] = useState<Plugin[] | null>(null);
+  const [open, setOpen] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      setPlugins((await api<{ plugins: Plugin[] }>("/api/plugins")).plugins);
+    } catch {
+      setPlugins([]);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const act = async (name: string, action: "enable" | "disable") => {
+    try {
+      const r = await api<{ device: string }>("/api/plugins", { method: "POST", json: { name, action } });
+      notify(`${action === "enable" ? "Enabling" : "Disabling"} ${name}`, `On ${r.device}.`, "ok");
+      setTimeout(load, 4000);
+    } catch (err) {
+      notify("Could not do that", (err as Error).message, "err");
+    }
+  };
+
+  const remove = async (name: string) => {
+    if (!confirm(`Delete the saved code for ${name}?`)) return;
+    await api(`/api/plugins?name=${encodeURIComponent(name)}`, { method: "DELETE" }).catch(() => undefined);
+    await load();
+  };
+
+  if (!plugins?.length) return null;
+  return (
+    <>
+      <h2 className="tools-title">Tools Jarvis built</h2>
+      <ul className="job-list">
+        {plugins.map((p) => (
+          <li key={p.id}>
+            <button className={open === p.name ? "active" : ""} onClick={() => setOpen(open === p.name ? "" : p.name)}>
+              <span className={`pill ${p.enabled_on.length ? "done" : p.valid ? "queued" : "failed"}`}>{p.enabled_on.length ? "On" : p.valid ? "Off" : "Broken"}</span>
+              <span className="grow clip">{p.name}</span>
+              <span className="muted small">{timeAgo(p.updated_at)}</span>
+            </button>
+            {open === p.name && (
+              <div className="tool-detail">
+                <p className="small">{p.description}</p>
+                {p.problem && <p className="err small">{p.problem}</p>}
+                <pre className="code">{p.code}</pre>
+                <div className="row">
+                  {p.enabled_on.length ? <button className="btn small ghost" onClick={() => act(p.name, "disable")}>Disable</button>
+                    : p.valid && <button className="btn small primary" onClick={() => act(p.name, "enable")}><Icon name="check" size={14} /> Enable</button>}
+                  <button className="btn small ghost" onClick={() => remove(p.name)}>Delete</button>
+                </div>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
 export function TasksView({ focusId, onFocus, onChanged, notify }: {
   focusId: string | null;
   onFocus: (id: string | null) => void;
@@ -138,6 +203,7 @@ export function TasksView({ focusId, onFocus, onChanged, notify }: {
             ))}
           </ul>
         )}
+        <SavedTools notify={notify} />
       </section>
       <section className="panel detail">
         {!selected ? (

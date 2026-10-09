@@ -39,9 +39,11 @@ export const deviceInfoTools: Tool[] = [
         const events = await jobEvents(ctx.sb, id, 0, 400);
         return { ...job, recent_log: events.slice(-15).map((e) => e.text) };
       }
-      const { data } = await ctx.sb.from("jobs").select("id, title, tool, status, error, created_at, finished_at")
+      const { data } = await ctx.sb.from("jobs").select("id, title, tool, status, error, result, created_at, finished_at")
         .order("created_at", { ascending: false }).limit(8);
-      return { tasks: data || [] };
+      return {
+        tasks: (data || []).map((j) => ({ ...j, result: j.result ? JSON.stringify(j.result).slice(0, 800) : null })),
+      };
     },
   },
 ];
@@ -61,6 +63,17 @@ function deviceTool(spec: ManifestTool, owners: Device[]): Tool {
       const args = { ...a };
       delete args.device;
       const title = str(a.title || a.instructions || a.name || a.query || spec.name, 120) || spec.name;
+      if (spec.approval || spec.long_running) {
+        // One background task of a kind per conversation at a time: asking again
+        // while it is waiting or running points at the same task.
+        const { data: open } = await ctx.sb.from("jobs").select("id, title, status")
+          .eq("conversation_id", ctx.conversationId).eq("tool", spec.name)
+          .in("status", ["needs_approval", "queued", "running"])
+          .gt("created_at", new Date(Date.now() - 30 * 60_000).toISOString()).limit(1);
+        if (open?.length) {
+          return { status: open[0].status, task_id: open[0].id, note: "This task is already lined up or running. Do not start another; say it is in progress." };
+        }
+      }
       const job = await queueJob(ctx.sb, {
         deviceId: device.id, tool: spec.name, args, title: `${spec.name.replace(/_/g, " ")}: ${title}`,
         longRunning: !!spec.long_running, needsApproval: !!spec.approval, conversationId: ctx.conversationId,

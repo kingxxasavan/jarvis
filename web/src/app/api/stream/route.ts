@@ -23,7 +23,8 @@ export const GET = route(async ({ sb }, req) => {
     device: { id: device.id, name: device.name },
     base,
     ws: `${base.replace(/^https:/, "wss:")}/ws?t=${mintPass(device.stream_secret, "stream", 120)}`,
-    files: mintPass(device.stream_secret, "files", 900),
+    desktop: `${base.replace(/^https:/, "wss:")}/ws?mode=desktop&t=${mintPass(device.stream_secret, "stream", 120)}`,
+    files: mintPass(device.stream_secret, "files", 3600),
     vscode: (device.stream_info as { vscode?: string } | null)?.vscode || "",
   };
 });

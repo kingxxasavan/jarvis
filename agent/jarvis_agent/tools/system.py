@@ -157,10 +157,11 @@ def open_app(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
 
 def list_apps(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
     q = str(args.get("query") or "").strip()
-    names = sorted(_start_menu_entries())
+    names = sorted(_start_menu_entries(), key=str.lower)
     if q:
         names = [n for n in names if _score(q, n)]
-    return {"apps": names[:80], "total": len(names)}
+    limit = 500 if args.get("all") else 80
+    return {"apps": names[:limit], "total": len(names)}
 
 
 def open_url(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
@@ -236,7 +237,7 @@ TOOLS = [
     Tool("open_app", "Open an installed app by name (e.g. Chrome, VS Code, Spotify, terminal, files).",
          schema({"name": {"type": "string"}}, ["name"]), open_app),
     Tool("list_apps", "List apps installed on the device, optionally filtered.",
-         schema({"query": {"type": "string"}}), list_apps),
+         schema({"query": {"type": "string"}, "all": {"type": "boolean", "description": "Return every app, not the first 80"}}), list_apps),
     Tool("open_url", "Open a web page in the device's browser.", schema({"url": {"type": "string"}}, ["url"]), open_url),
     Tool("play_youtube", "Play a YouTube video in the device's browser. Prefer the play_youtube tool with on='device'.",
          schema({"video_id": {"type": "string"}}, ["video_id"]), play_youtube, hidden=True),

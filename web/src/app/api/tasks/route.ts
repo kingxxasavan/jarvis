@@ -3,9 +3,32 @@ import { getJob, jobEvents, listDevices, queueJob, setJobStatus } from "@/lib/de
 
 export const runtime = "nodejs";
 
-// Recent tasks, or one task with its log (pass id and after=<last event id>).
+function outcome(j: { status: string; error: string | null; result: unknown }): string {
+  if (j.error) return j.error.slice(0, 600);
+  const r = (j.result || {}) as Record<string, unknown>;
+  const text = r.summary ?? r.note ?? r.saved ?? r.opened;
+  if (text) return String(text).slice(0, 1200);
+  return j.result ? JSON.stringify(j.result).slice(0, 600) : "";
+}
+
+const UUID = /^[0-9a-f-]{36}$/i;
+
+// Recent tasks, one task with its log (pass id and after=<last event id>), or
+// the current state of several (ids=a,b) for the cards in the chat.
 export const GET = route(async ({ sb }, req) => {
   const params = new URL(req.url).searchParams;
+  const ids = (params.get("ids") || "").split(",").filter((x) => UUID.test(x)).slice(0, 20);
+  if (ids.length) {
+    const { data, error } = await sb.from("jobs").select("id, tool, status, error, result").in("id", ids);
+    if (error) throw new Error(error.message);
+    return {
+      jobs: (data || []).map((j) => {
+        const r = (j.result || {}) as { name?: string; valid?: boolean; problem?: string };
+        const plugin = j.tool === "create_plugin" && j.status === "done" && r.name ? { name: r.name, valid: !!r.valid } : undefined;
+        return { id: j.id, status: j.status, outcome: plugin ? (r.valid ? `Built the tool ${r.name}. Its code is saved in the database.` : `Built ${r.name}, but it does not load: ${r.problem || "unknown problem"}`) : outcome(j), plugin };
+      }),
+    };
+  }
   const id = params.get("id");
   if (id) {
     const job = await getJob(sb, id);

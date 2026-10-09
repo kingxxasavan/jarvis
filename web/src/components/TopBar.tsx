@@ -1,11 +1,13 @@
 "use client";
 import { Icon } from "./Icon";
 
-export type View = "chat" | "apps" | "tasks" | "memory" | "settings";
+export type View = "chat" | "apps" | "files" | "code" | "tasks" | "memory" | "settings";
 
 const TABS: { id: View; label: string }[] = [
   { id: "chat", label: "Chat" },
   { id: "apps", label: "Apps" },
+  { id: "files", label: "Files" },
+  { id: "code", label: "Code" },
   { id: "tasks", label: "Tasks" },
   { id: "memory", label: "Memory" },
   { id: "settings", label: "Settings" },

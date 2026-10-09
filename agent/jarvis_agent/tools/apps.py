@@ -39,9 +39,10 @@ def filename_for(url: str, headers: httpx.Headers) -> str:
 
 
 class AppTools:
-    def __init__(self, downloads_dir: Path, stream_getter):
+    def __init__(self, downloads_dir: Path, stream_getter, cloud=None):
         self.downloads_dir = downloads_dir
         self.stream = stream_getter
+        self.cloud = cloud
 
     def browser_open(self, args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
         service = self.stream()
@@ -79,8 +80,11 @@ class AppTools:
                         last_report = time.time()
                         ctx.log("log", f"{got / 2**20:.1f} MB" + (f" of {total / 2**20:.1f} MB ({got * 100 // total}%)" if total else ""))
             part.replace(target)
+        cloud = ""
+        if self.cloud and args.get("cloud", True) not in (False, "false", 0):
+            cloud = self.cloud.submit(target, ctx.log)
         return {"saved": target.name, "folder": str(self.downloads_dir), "size_mb": round(got / 2**20, 2),
-                "note": "It is in the Downloads list on the Apps tab."}
+                "note": "It is in the Files tab on the laptop." + (f" {cloud}" if cloud else "")}
 
     def list_downloads(self, args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
@@ -93,7 +97,8 @@ class AppTools:
             Tool("browser_open", "Open a web page in the streamed browser on this device, the one Sir uses from the Apps tab "
                  "(logged-in sites, Spotify web player, school sites).", schema({"url": {"type": "string"}}, ["url"]), self.browser_open),
             Tool("download_file", "Download a file from a web address into the JARVIS downloads folder on this device.",
-                 schema({"url": {"type": "string"}, "filename": {"type": "string", "description": "Optional name to save as"}}, ["url"]),
+                 schema({"url": {"type": "string"}, "filename": {"type": "string", "description": "Optional name to save as"},
+                         "cloud": {"type": "boolean", "description": "Also copy it to cloud files (default true)"}}, ["url"]),
                  self.download_file, long_running=True),
             Tool("list_downloads", "List files in the JARVIS downloads folder on this device.", schema(), self.list_downloads),
         ]

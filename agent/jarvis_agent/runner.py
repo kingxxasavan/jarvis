@@ -17,7 +17,7 @@ from typing import Any
 from .api import ApiError, DeviceApi
 from .config import Config
 from .registry import Registry, ToolContext
-from .config import DATA_DIR
+from .config import DATA_DIR, JARVIS_REPO
 from .tools import apps as app_tools
 from .tools import plugins as plugin_tools
 from .tools import files, projects, system
@@ -36,16 +36,18 @@ def platform_label() -> str:
     return f"{platform.system()} {platform.release()}"
 
 
-def build_registry(cfg: Config, stream_getter=lambda: None) -> Registry:
-    ws = projects.Workspace(cfg.workspace, cfg.codex_bin, cfg.claude_bin)
-    apps = app_tools.AppTools(cfg.downloads_dir, stream_getter)
+def build_registry(cfg: Config, stream_getter=lambda: None, cloud=None, api: DeviceApi | None = None,
+                   restart=None) -> Registry:
+    ws = projects.Workspace(cfg.workspace, cfg.codex_bin, cfg.claude_bin, restart=restart)
+    apps = app_tools.AppTools(cfg.downloads_dir, stream_getter, cloud)
     registry = Registry(builtins=[])
     plug = plugin_tools.Plugins(
         cfg.codex_bin, cfg.claude_bin,
         builtin_names=lambda: {t.name for t in registry.builtins},
         reload=lambda: registry.reload_plugins(),
+        save=api.save_plugin if api else None,
     )
-    registry.builtins = [*system.TOOLS, *files.TOOLS, *ws.tools(), *apps.tools(), *plug.tools()]
+    registry.builtins = [*system.TOOLS, *files.Files(cfg.downloads_dir).tools(), *ws.tools(), *apps.tools(), *plug.tools()]
     registry.reload_plugins()
     return registry
 
@@ -67,14 +69,21 @@ class Runner:
         self.api = DeviceApi(cfg.supabase_url, cfg.supabase_key, cfg.device_token)
         self._stream_pending: tuple[str, str] | None = None
         self.stream = None
+        from .cloud import CloudSync
+
+        self.cloud = CloudSync(DeviceApi(cfg.supabase_url, cfg.supabase_key, cfg.device_token, timeout=60),
+                               cfg.cloud_enabled, cfg.cloud_max_mb)
         if cfg.stream_enabled:
             from .stream.server import StreamService
 
             self.stream = StreamService(DATA_DIR, cfg.downloads_dir, cfg.chrome_bin, cfg.stream_port,
-                                        self._publish_stream, cfg.tunnel_token, cfg.stream_public_url)
-        self.registry = build_registry(cfg, lambda: self.stream)
+                                        self._publish_stream, cfg.tunnel_token, cfg.stream_public_url,
+                                        cloud=self.cloud, extra_roots=[("Projects", cfg.workspace), ("JARVIS code", JARVIS_REPO)],
+                                        audio_device=cfg.audio_device)
+        self.registry = build_registry(cfg, lambda: self.stream, self.cloud, self.api, self.request_restart)
         self.pool = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="job")
         self.running: set[str] = set()
+        self.restart_wanted = False
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.manifest_dirty = threading.Event()
@@ -86,6 +95,10 @@ class Runner:
             self.manifest_dirty.set()
 
         self.registry.reload_plugins = reload_and_flag  # type: ignore[method-assign]
+
+    def request_restart(self) -> None:
+        """Restart once the current jobs (including the one asking) have reported back."""
+        self.restart_wanted = True
 
     def _publish_stream(self, url: str, secret: str) -> None:
         # Called from the tunnel thread; the main loop does the network call (and retries).
@@ -144,6 +157,8 @@ class Runner:
                 raise ValueError("Job arguments must be an object.")
             log.info("job %s: %s", job_id[:8], name)
             ctx = ToolContext(job_id=job_id, log=self._job_log(job_id), cancelled=self._cancelled(job_id))
+            if name == "create_plugin":
+                args = {**args, "_job_id": job_id}
             result = tool.run(args, ctx)
             self.api.finish(job_id, True, jsonable(result), None)
             log.info("job %s done", job_id[:8])
@@ -173,6 +188,12 @@ class Runner:
                         self.running.add(job["id"])
                     self.pool.submit(self._run, job)
                 backoff = 2.0
+                if self.restart_wanted:
+                    with self.lock:
+                        idle = not self.running
+                    if idle:
+                        log.info("restarting to load updated code")
+                        return
                 self.stop.wait(0.3 if jobs else IDLE_POLL)
             except ApiError as exc:
                 if "removed" in str(exc):

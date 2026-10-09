@@ -20,8 +20,10 @@ BLOCK = 960  # 20 ms at 48 kHz
 
 
 class AudioCapture:
-    def __init__(self, on_chunk: Callable[[bytes], None]):
+    def __init__(self, on_chunk: Callable[[bytes], None], device: str = "", on_error: Callable[[str], None] | None = None):
         self.on_chunk = on_chunk
+        self.on_error = on_error
+        self.device = device.strip()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.error = ""
@@ -56,8 +58,17 @@ class AudioCapture:
 
             warnings.filterwarnings("ignore", module="soundcard")
             speaker = sc.default_speaker()
+            if self.device:
+                # e.g. JARVIS_AUDIO_DEVICE=CABLE Input: capture only what is routed to that
+                # output, so streamed sound plays on the viewer instead of the laptop.
+                match = [s for s in sc.all_speakers() if self.device.lower() in s.name.lower()]
+                if match:
+                    speaker = match[0]
+                else:
+                    log.warning("no audio output named like %r; using %s", self.device, speaker.name)
             mic = sc.get_microphone(id=str(speaker.name), include_loopback=True)
             log.info("capturing audio from %s", speaker.name)
+            self.error = ""
             with mic.recorder(samplerate=RATE, channels=2, blocksize=BLOCK) as rec:
                 while not self._stop.is_set():
                     data = rec.record(numframes=BLOCK)
@@ -68,3 +79,5 @@ class AudioCapture:
         except Exception as exc:  # noqa: BLE001 - audio is optional; video keeps working
             self.error = f"{exc.__class__.__name__}: {exc}"
             log.warning("audio capture stopped: %s", self.error)
+            if self.on_error:
+                self.on_error(f"Sound capture on the laptop stopped: {self.error}")

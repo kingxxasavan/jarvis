@@ -5,6 +5,13 @@ through the Cloudflare tunnel.
     GET /ws?t=<pass>       the streamed browser (frames, audio, input, tabs)
     GET /files?t=<pass>    files in the JARVIS downloads folder
     GET /files/<name>?t=   download one of them
+    GET /fs/list?t=&path=  the file manager: a folder on this computer
+    GET /fs/get?t=&path=   one file (inline=1 to view it in the browser)
+    POST /fs/upload?t=&path=<folder>   multipart upload into a folder
+    POST /fs/open?t=&path= open a file or folder on this computer's screen
+    POST /fs/cloud?t=&path= copy a file to the owner's cloud files
+
+/ws?mode=desktop streams the whole screen instead of the browser.
 
 Every route but /health needs a pass minted by the website for the signed-in
 owner. Binary messages to the page start with one byte: 1 = JPEG frame,
@@ -16,6 +23,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
+import re
 import threading
 from collections import deque
 from pathlib import Path
@@ -25,13 +34,17 @@ from aiohttp import WSMsgType, web
 
 from . import auth
 from .audio import AudioCapture
+from ..tools import files as fs
 from .chrome import ChromeBrowser
+from .desktop import DesktopScreen
 from .tunnel import Tunnel
 
 log = logging.getLogger("jarvis.stream")
 
 FRAME, AUDIO = b"\x01", b"\x02"
 CORS = {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"}
+GUID_NAME = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)  # Chrome download in progress
+INPUT = {"mouse", "key", "view", "text", "copy"}
 
 
 class Client:
@@ -41,8 +54,9 @@ class Client:
 
     MAX_QUEUED_AUDIO = 25  # 0.5 s; older sound is dropped rather than played late
 
-    def __init__(self, ws: web.WebSocketResponse):
+    def __init__(self, ws: web.WebSocketResponse, mode: str = "browser"):
         self.ws = ws
+        self.mode = mode
         self.audio = False
         self.frame: bytes | None = None
         self.queue: deque[bytes | str] = deque()  # messages and sound, in order
@@ -84,15 +98,20 @@ class Client:
 
 class StreamService:
     def __init__(self, data_dir: Path, downloads_dir: Path, chrome_bin: str = "", port: int = 8788,
-                 on_published: Callable[[str, str], None] | None = None, tunnel_token: str = "", public_url: str = ""):
+                 on_published: Callable[[str, str], None] | None = None, tunnel_token: str = "", public_url: str = "",
+                 cloud=None, extra_roots: list[tuple[str, Path]] | None = None, audio_device: str = ""):
         self.port = port
         self.downloads_dir = downloads_dir
+        self.cloud = cloud
+        self.extra_roots = extra_roots or []
         self.secret = auth.new_secret()
         self.on_published = on_published
         self.clients: set[Client] = set()
         self.loop: asyncio.AbstractEventLoop | None = None
-        self.browser = ChromeBrowser(data_dir / "chrome-profile", downloads_dir, chrome_bin, self._send_frame, self._send_json)
-        self.audio = AudioCapture(self._on_audio)
+        self.browser = ChromeBrowser(data_dir / "chrome-profile", downloads_dir, chrome_bin, self._send_frame, self._send_json,
+                                     on_downloaded=self._downloaded)
+        self.desktop = DesktopScreen(self._send_desktop_frame, self._send_desktop_json)
+        self.audio = AudioCapture(self._on_audio, audio_device, on_error=lambda m: self._notify(m, "error"))
         self.tunnel = Tunnel(port, self._on_url, tunnel_token, public_url)
         self._ready = threading.Event()
         self.error = ""
@@ -123,6 +142,11 @@ class StreamService:
             web.get("/ws", self._ws),
             web.get("/files", self._list_files),
             web.get("/files/{name}", self._get_file),
+            web.get("/fs/list", self._fs_list),
+            web.get("/fs/get", self._fs_get),
+            web.post("/fs/upload", self._fs_upload),
+            web.post("/fs/open", self._fs_open),
+            web.post("/fs/cloud", self._fs_cloud),
         ])
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -151,11 +175,38 @@ class StreamService:
     async def _send_frame(self, jpeg: bytes) -> None:
         packet = FRAME + jpeg
         for c in list(self.clients):
-            c.offer(packet)
+            if c.mode == "browser":
+                c.offer(packet)
+
+    async def _send_desktop_frame(self, jpeg: bytes) -> None:
+        packet = FRAME + jpeg
+        for c in list(self.clients):
+            if c.mode == "desktop":
+                c.offer(packet)
 
     async def _send_json(self, msg: dict) -> None:
         text = json.dumps(msg)
-        await asyncio.gather(*(self._send(c, text) for c in list(self.clients)))
+        for c in list(self.clients):
+            if c.mode == "browser" or msg.get("type") == "download":
+                c.push(text)
+
+    async def _send_desktop_json(self, msg: dict) -> None:
+        text = json.dumps(msg)
+        for c in list(self.clients):
+            if c.mode == "desktop":
+                c.push(text)
+
+    def _downloaded(self, path: Path) -> None:
+        """A download in the streamed Chrome finished: keep a copy in cloud files."""
+        if not self.cloud:
+            return
+        note = self.cloud.submit(path, lambda kind, text: self._notify(text, kind))
+        log.info("download %s: %s", path.name, note)
+
+    def _notify(self, text: str, kind: str = "cloud") -> None:
+        if self.loop:
+            msg = json.dumps({"type": "error" if kind == "error" else "notice", "message": text})
+            self.loop.call_soon_threadsafe(lambda: [c.push(msg) for c in list(self.clients)])
 
     def _on_audio(self, pcm: bytes) -> None:
         if self.loop:
@@ -185,7 +236,7 @@ class StreamService:
             return web.json_response({"error": "This link has expired. Reopen Apps in JARVIS."}, status=403, headers=CORS)
         ws = web.WebSocketResponse(heartbeat=25, max_msg_size=1024**2, compress=False)
         await ws.prepare(request)
-        client = Client(ws)
+        client = Client(ws, "desktop" if request.query.get("mode") == "desktop" else "browser")
         client.sender = asyncio.create_task(self._pump(client))
         self.clients.add(client)
         log.info("viewer connected (%d watching)", len(self.clients))
@@ -193,7 +244,10 @@ class StreamService:
         wake = asyncio.Event()
         worker = asyncio.create_task(self._work(client, inbox, wake))
         try:
-            await self.browser.start_stream()
+            if client.mode == "desktop":
+                await self.desktop.start_stream()
+            else:
+                await self.browser.start_stream()
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
                     continue
@@ -210,8 +264,10 @@ class StreamService:
                 client.sender.cancel()
             self.clients.discard(client)
             self._update_audio()
-            if not self.clients:
+            if not any(c.mode == "browser" for c in self.clients):
                 await self.browser.stop_stream()
+            if not any(c.mode == "desktop" for c in self.clients):
+                await self.desktop.stop_stream()
             log.info("viewer left (%d watching)", len(self.clients))
         return ws
 
@@ -242,7 +298,7 @@ class StreamService:
                 try:
                     await self._handle(client, m)
                 except Exception as exc:  # noqa: BLE001
-                    if m.get("type") in ("mouse", "key", "view", "text", "copy", "audio"):
+                    if m.get("type") in (*INPUT, "audio"):
                         # Input landing mid-navigation can fail harmlessly; do not nag the viewer.
                         log.debug("input %s ignored: %s", m.get("type"), exc)
                     else:
@@ -250,7 +306,7 @@ class StreamService:
 
     async def _handle(self, client: Client, m: dict) -> None:
         kind = m.get("type")
-        b = self.browser
+        b = self.desktop if client.mode == "desktop" and kind in INPUT else self.browser
         if kind == "mouse":
             await b.mouse(m)
         elif kind == "key":
@@ -292,7 +348,7 @@ class StreamService:
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
         files = []
         for p in sorted(self.downloads_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-            if p.is_file() and not p.name.endswith((".crdownload", ".part", ".tmp")):
+            if p.is_file() and not p.name.endswith((".crdownload", ".part", ".tmp")) and not GUID_NAME.match(p.name):
                 st = p.stat()
                 files.append({"name": p.name, "size": st.st_size, "modified": int(st.st_mtime * 1000)})
         return web.json_response({"files": files[:300], "folder": str(self.downloads_dir)}, headers=CORS)
@@ -305,6 +361,133 @@ class StreamService:
             return web.json_response({"error": "not found"}, status=404, headers=CORS)
         quoted = path.name.replace('"', "")
         return web.FileResponse(path, headers={**CORS, "Content-Disposition": f'attachment; filename="{quoted}"'})
+
+    # File manager ----------------------------------------------------------------
+
+    def _roots(self) -> list[dict[str, str]]:
+        roots = [("JARVIS downloads", self.downloads_dir)]
+        for label in ("Desktop", "Documents", "Downloads", "Pictures", "Videos", "Music"):
+            p = fs.known_folder(label.lower())
+            if p and p.is_dir():
+                roots.append((label, p))
+        roots += self.extra_roots
+        roots.append(("Home", Path.home()))
+        return [{"label": label, "path": str(p)} for label, p in roots]
+
+    def _fs_path(self, request: web.Request, default: str = "") -> Path:
+        raw = request.query.get("path") or default
+        if not raw:
+            return self.downloads_dir
+        return fs.resolve(raw)
+
+    def _deny(self, exc: Exception) -> web.Response:
+        status = 403 if isinstance(exc, PermissionError) else 404 if isinstance(exc, FileNotFoundError) else 400
+        return web.json_response({"error": str(exc) or exc.__class__.__name__}, status=status, headers=CORS)
+
+    async def _fs_list(self, request: web.Request) -> web.Response:
+        if not self._authorized(request, "files"):
+            return web.json_response({"error": "expired"}, status=403, headers=CORS)
+        try:
+            folder = self._fs_path(request)
+            if folder == self.downloads_dir:
+                folder.mkdir(parents=True, exist_ok=True)
+            if not folder.is_dir():
+                raise FileNotFoundError(f"There is no folder at {folder}.")
+            items = []
+            for p in folder.iterdir():
+                if p.name.startswith(".") or p.name.lower() in ("desktop.ini", "thumbs.db") or GUID_NAME.match(p.name):
+                    continue
+                try:
+                    st = p.stat()
+                    is_dir = p.is_dir()
+                except OSError:
+                    continue
+                items.append({"name": p.name, "dir": is_dir, "size": 0 if is_dir else st.st_size, "modified": int(st.st_mtime * 1000)})
+            items.sort(key=lambda i: (not i["dir"], i["name"].lower()))
+            parent = str(folder.parent) if folder.parent != folder else ""
+            try:
+                fs.resolve(parent) if parent else None
+            except PermissionError:
+                parent = ""
+            return web.json_response({"path": str(folder), "parent": parent, "items": items[:2000], "roots": self._roots(),
+                                      "cloud": bool(self.cloud and self.cloud.enabled)}, headers=CORS)
+        except (OSError, ValueError) as exc:
+            return self._deny(exc)
+
+    async def _fs_get(self, request: web.Request) -> web.StreamResponse:
+        if not self._authorized(request, "files"):
+            return web.json_response({"error": "expired"}, status=403, headers=CORS)
+        try:
+            path = self._fs_path(request)
+            if not path.is_file():
+                raise FileNotFoundError("No such file.")
+            if fs.SECRET_FILE.search(str(path)):
+                raise PermissionError("That file holds secrets or keys, so it is not shared.")
+        except (OSError, ValueError) as exc:
+            return self._deny(exc)
+        quoted = path.name.replace('"', "")
+        disposition = "inline" if request.query.get("inline") else "attachment"
+        ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return web.FileResponse(path, headers={**CORS, "Content-Type": ctype, "Content-Disposition": f'{disposition}; filename="{quoted}"'})
+
+    async def _fs_upload(self, request: web.Request) -> web.Response:
+        if not self._authorized(request, "files"):
+            return web.json_response({"error": "expired"}, status=403, headers=CORS)
+        try:
+            folder = self._fs_path(request)
+            folder.mkdir(parents=True, exist_ok=True)
+            saved = []
+            reader = await request.multipart()
+            from ..tools.apps import clean_name, unique_path
+
+            while True:
+                part = await reader.next()
+                if part is None:
+                    break
+                if not getattr(part, "filename", None):
+                    continue
+                target = unique_path(folder, clean_name(part.filename))
+                tmp = target.with_name(target.name + ".part")
+                with open(tmp, "wb") as f:
+                    while chunk := await part.read_chunk(1024 * 512):
+                        f.write(chunk)
+                tmp.replace(target)
+                saved.append(target.name)
+            return web.json_response({"saved": saved, "folder": str(folder)}, headers=CORS)
+        except (OSError, ValueError) as exc:
+            return self._deny(exc)
+
+    async def _fs_open(self, request: web.Request) -> web.Response:
+        if not self._authorized(request, "files"):
+            return web.json_response({"error": "expired"}, status=403, headers=CORS)
+        try:
+            path = self._fs_path(request)
+            args = {"path": str(path)}
+            if path.is_dir():
+                result = await asyncio.to_thread(fs.open_folder, args, None)
+            else:
+                result = await asyncio.to_thread(fs.Files(self.downloads_dir).open_file, args, None)
+            return web.json_response(result, headers=CORS)
+        except (OSError, ValueError) as exc:
+            return self._deny(exc)
+
+    async def _fs_cloud(self, request: web.Request) -> web.Response:
+        if not self._authorized(request, "files"):
+            return web.json_response({"error": "expired"}, status=403, headers=CORS)
+        try:
+            path = self._fs_path(request)
+            if not path.is_file():
+                raise FileNotFoundError("No such file.")
+            if fs.SECRET_FILE.search(str(path)):
+                raise PermissionError("That file holds secrets or keys, so it is not uploaded.")
+            if not self.cloud:
+                raise ValueError("Cloud files are off on this device.")
+            await asyncio.to_thread(self.cloud.upload_now, path)
+            return web.json_response({"uploaded": path.name}, headers=CORS)
+        except (OSError, ValueError, RuntimeError) as exc:
+            return self._deny(exc)
+        except Exception as exc:  # noqa: BLE001 - upload errors are reported to the viewer
+            return web.json_response({"error": str(exc)}, status=502, headers=CORS)
 
 
 def status_line(service: StreamService | None) -> str:

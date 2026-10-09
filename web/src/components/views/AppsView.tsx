@@ -1,8 +1,61 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { api, timeAgo } from "@/lib/client/api";
+import { api, store, timeAgo } from "@/lib/client/api";
 import { Icon } from "../Icon";
-import { RemoteBrowser, type StreamConn } from "../RemoteBrowser";
+import { RemoteBrowser, type StreamConn, type StreamMode } from "../RemoteBrowser";
+
+const MODE_KEY = "jarvis.appsMode";
+
+// Every app installed on the laptop (its Start Menu). Opening one switches to the
+// Desktop view, where it can be used like any program on the laptop.
+function LaptopApps({ onOpened, notify }: { onOpened: () => void; notify: (title: string, body?: string, tone?: "ok" | "err") => void }) {
+  const [apps, setApps] = useState<string[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api<{ result: { apps: string[] } }>("/api/devices/run", { method: "POST", json: { tool: "list_apps", args: { all: true } } })
+      .then((r) => setApps(r.result.apps || []))
+      .catch((err) => setError((err as Error).message));
+  }, []);
+
+  const open = async (name: string) => {
+    setBusy(name);
+    try {
+      await api("/api/devices/run", { method: "POST", json: { tool: "open_app", args: { name } } });
+      notify(`Opening ${name}`, "Showing the laptop screen.", "ok");
+      onOpened();
+    } catch (err) {
+      notify(`Could not open ${name}`, (err as Error).message, "err");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const shown = (apps || []).filter((a) => !query || a.toLowerCase().includes(query.toLowerCase()));
+  return (
+    <section className="panel laptop-apps">
+      <h2><Icon name="spark" /> Laptop apps</h2>
+      <label className="search">
+        <Icon name="search" size={14} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find an app (Claude, Word...)" aria-label="Find an app" />
+      </label>
+      {error ? <p className="err small">{error}</p> : !apps ? <p className="empty small">Loading...</p> : (
+        <ul className="rows app-list">
+          {shown.slice(0, 200).map((a) => (
+            <li key={a}>
+              <button className="grow clip app-open" onClick={() => open(a)} disabled={!!busy} title={`Open ${a} on the laptop`}>
+                {busy === a ? <i className="spin" /> : null} {a}
+              </button>
+            </li>
+          ))}
+          {!shown.length && <li className="muted small">No app matches.</li>}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 type FileRow = { name: string; size: number; modified: number };
 
@@ -56,15 +109,31 @@ function Downloads({ conn, refreshKey }: { conn: StreamConn; refreshKey: number 
   );
 }
 
-export function AppsView({ command, onCommand, onYouTube, notify }: {
+export function AppsView({ command, onCommand, onCommandDone, onYouTube, notify }: {
   command: { url: string; n: number } | null;
   onCommand: (url: string) => void;
+  onCommandDone: () => void;
   onYouTube: () => void;
   notify: (title: string, body?: string, tone?: "ok" | "err") => void;
 }) {
   const [conn, setConn] = useState<StreamConn | null>(null);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
+  const [mode, setModeState] = useState<StreamMode>("browser");
+
+  useEffect(() => {
+    if (store.get(MODE_KEY) === "desktop") setModeState("desktop");
+  }, []);
+
+  const setMode = useCallback((m: StreamMode) => {
+    setModeState(m);
+    store.set(MODE_KEY, m);
+  }, []);
+
+  // A launcher command (open Spotify...) always shows the browser.
+  useEffect(() => {
+    if (command?.url) setMode("browser");
+  }, [command, setMode]);
 
   const connect = useCallback(async () => {
     setError("");
@@ -120,6 +189,14 @@ export function AppsView({ command, onCommand, onYouTube, notify }: {
       <aside className="apps-side">
         <section className="panel">
           <h2><Icon name="device" /> {conn.device.name}</h2>
+          <div className="mode-switch" role="tablist" aria-label="What to show">
+            <button className={mode === "browser" ? "active" : ""} onClick={() => setMode("browser")} role="tab" aria-selected={mode === "browser"}>
+              <Icon name="globe" size={14} /> Browser
+            </button>
+            <button className={mode === "desktop" ? "active" : ""} onClick={() => setMode("desktop")} role="tab" aria-selected={mode === "desktop"}>
+              <Icon name="device" size={14} /> Desktop
+            </button>
+          </div>
           <div className="launchers">
             {launch.map((l) => (
               <button key={l.id} onClick={l.run}>
@@ -128,12 +205,18 @@ export function AppsView({ command, onCommand, onYouTube, notify }: {
               </button>
             ))}
           </div>
-          <p className="muted small">Click the page to type. Paste works with Ctrl+V; Ctrl+C copies selected text to this device.</p>
+          <p className="muted small">
+            {mode === "desktop"
+              ? "The whole laptop screen: every app works here. Click to focus, then type. Ctrl+V pastes your text."
+              : "Click the page to type. Paste works with Ctrl+V; Ctrl+C copies selected text to this device."}
+          </p>
         </section>
+        <LaptopApps onOpened={() => setMode("desktop")} notify={notify} />
         <Downloads conn={conn} refreshKey={refresh} />
       </aside>
       <section className="apps-main">
-        <RemoteBrowser conn={conn} command={command} onReconnect={connect} onDownload={onDownload} notify={notify} />
+        <RemoteBrowser key={mode} conn={conn} mode={mode} command={command} onCommandDone={onCommandDone}
+          onReconnect={connect} onDownload={onDownload} notify={notify} />
       </section>
     </div>
   );

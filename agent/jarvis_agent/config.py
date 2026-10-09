@@ -14,6 +14,7 @@ ENV_FILE = AGENT_DIR / ".env"
 DATA_DIR = AGENT_DIR / "data"
 PLUGIN_DIR = AGENT_DIR / "plugins"
 DRAFT_DIR = PLUGIN_DIR / "drafts"
+JARVIS_REPO = AGENT_DIR.parent  # this checkout of the JARVIS repo, editable from the Code tab
 
 
 def read_env(path: Path = ENV_FILE) -> dict[str, str]:
@@ -68,6 +69,9 @@ class Config:
     tunnel_token: str
     stream_public_url: str
     vscode_tunnel: str
+    cloud_enabled: bool = True
+    cloud_max_mb: int = 50
+    audio_device: str = ""
 
     @staticmethod
     def load() -> "Config":
@@ -93,6 +97,9 @@ class Config:
             tunnel_token=env.get("CLOUDFLARE_TUNNEL_TOKEN", ""),
             stream_public_url=env.get("STREAM_PUBLIC_URL", ""),
             vscode_tunnel=env.get("VSCODE_TUNNEL", ""),
+            cloud_enabled=env.get("JARVIS_CLOUD", "on").lower() not in ("off", "0", "false", "no"),
+            cloud_max_mb=int(env.get("JARVIS_CLOUD_MAX_MB", "50") or 50),
+            audio_device=env.get("JARVIS_AUDIO_DEVICE", ""),
         )
 
 

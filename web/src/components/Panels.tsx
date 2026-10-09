@@ -14,7 +14,11 @@ function Waveform({ level }: { level: MutableRefObject<number> }) {
     if (!el || !g) return;
     let raf = 0;
     const bars = 46;
+    let lastDraw = 0;
     const draw = (t: number) => {
+      raf = requestAnimationFrame(draw);
+      if (document.hidden || !el.clientWidth || t - lastDraw < 40) return;
+      lastDraw = t;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const w0 = Math.round(el.clientWidth * dpr);
       const h0 = Math.round(el.clientHeight * dpr);
@@ -32,7 +36,6 @@ function Waveform({ level }: { level: MutableRefObject<number> }) {
         g.fillStyle = `rgba(80,200,255,${0.35 + Math.min(0.6, live)})`;
         g.fillRect(i * w + w * 0.3, mid - h, w * 0.4, h * 2);
       }
-      raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);

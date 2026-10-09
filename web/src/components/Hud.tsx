@@ -5,19 +5,26 @@ import { usePulse, type Alert } from "@/hooks/usePulse";
 import { useVoice } from "@/hooks/useVoice";
 import type { JobRef, VideoRef } from "@/lib/ai/events";
 import { api, store } from "@/lib/client/api";
+import { installErrorReporter } from "@/lib/client/report";
 import { Composer } from "./Composer";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { Orb, type OrbState } from "./Orb";
 import { ActivityPanel, StatusPanel, type Activity } from "./Panels";
 import { Player } from "./Player";
 import { Toasts, type Toast } from "./Toasts";
 import { TopBar, type View } from "./TopBar";
-import { Transcript } from "./Transcript";
+import { Transcript, type JobInfo } from "./Transcript";
 import { AppsView } from "./views/AppsView";
+import { CodeView } from "./views/CodeView";
+import { FilesView } from "./views/FilesView";
 import { MemoryView } from "./views/MemoryView";
 import { SettingsView } from "./views/SettingsView";
 import { TasksView } from "./views/TasksView";
 
 const SPEAK_KEY = "jarvis.speak";
+const VIEW_KEY = "jarvis.view";
+const VIEWS: View[] = ["chat", "apps", "files", "code", "tasks", "memory", "settings"];
+const FINAL = new Set(["done", "failed", "cancelled", "rejected"]);
 const QUICK_APPS: Record<string, string> = { vscode: "vscode", terminal: "terminal", files: "files" };
 const TOOL_ICON: Record<string, string> = {
   play_youtube: "youtube", youtube_search: "youtube", youtube_history: "youtube", web_search: "globe", read_webpage: "globe",
@@ -35,9 +42,22 @@ export function Hud({ initial }: { initial: string }) {
   const [voiceReplies, setVoiceReplies] = useState(true);
   const [provider, setProvider] = useState("");
   const [jobStatus, setJobStatus] = useState<Record<string, string>>({});
+  const [jobInfo, setJobInfo] = useState<Record<string, JobInfo>>({});
   const [appCommand, setAppCommand] = useState<{ url: string; n: number } | null>(null);
   const viaVoice = useRef(false);
+  const clearCommand = useCallback(() => setAppCommand(null), []);
   const interacted = useRef(false);
+
+  useEffect(() => {
+    installErrorReporter();
+    const saved = store.get(VIEW_KEY) as View | null;
+    if (saved && VIEWS.includes(saved)) setView(saved);
+  }, []);
+
+  const go = useCallback((v: View) => {
+    setView(v);
+    store.set(VIEW_KEY, v);
+  }, []);
 
   useEffect(() => {
     setVoiceReplies(store.get(SPEAK_KEY) !== "0");
@@ -79,7 +99,7 @@ export function Hud({ initial }: { initial: string }) {
       log("tasks", j.title, "run");
     },
     onTool: (c: ToolChip) => {
-      if (c.name === "pc_browser_open" && c.state === "done") setView("apps");
+      if (c.name === "pc_browser_open" && c.state === "done") go("apps");
       if (c.state !== "start") log(TOOL_ICON[c.name] || (c.name.startsWith("pc_") ? "device" : "spark"), c.label, c.state === "done" ? "ok" : "err");
     },
     onProvider: setProvider,
@@ -114,6 +134,57 @@ export function Hud({ initial }: { initial: string }) {
     setJobStatus((s) => ({ ...s, ...Object.fromEntries(pulse.jobs.map((j) => [j.id, j.status])) }));
   }, [pulse]);
 
+  // Tasks shown in the chat are followed every few seconds until they finish;
+  // when one does, its result appears on its card and is announced.
+  const chatJobs = useMemo(() => chat.items.flatMap((it) => it.jobs.map((j) => j.id)), [chat.items]);
+  const watching = useMemo(
+    () => chatJobs.filter((id) => !FINAL.has(jobStatus[id] || "queued") || (FINAL.has(jobStatus[id]) && !jobInfo[id])),
+    [chatJobs, jobStatus, jobInfo],
+  );
+  const watchKey = watching.join(",");
+  useEffect(() => {
+    if (!watchKey) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const { jobs } = await api<{ jobs: { id: string; status: string; outcome: string; plugin?: JobInfo["plugin"] }[] }>(`/api/tasks?ids=${watchKey}`);
+        if (stop) return;
+        setJobStatus((s) => {
+          for (const j of jobs) {
+            if (FINAL.has(j.status) && s[j.id] && !FINAL.has(s[j.id])) {
+              notify(j.status === "done" ? "Task finished" : "Task failed", j.outcome.slice(0, 160), j.status === "done" ? "ok" : "err");
+            }
+          }
+          return { ...s, ...Object.fromEntries(jobs.map((j) => [j.id, j.status])) };
+        });
+        const gone = watchKey.split(",").filter((id) => !jobs.some((j) => j.id === id));
+        setJobInfo((s) => ({
+          ...s,
+          ...Object.fromEntries(gone.map((id) => [id, { outcome: "This task was removed." }])),
+          ...Object.fromEntries(jobs.filter((j) => FINAL.has(j.status)).map((j) => [j.id, { ...s[j.id], outcome: j.outcome, plugin: j.plugin }])),
+        }));
+      } catch {
+        // the next tick tries again
+      }
+    };
+    void tick();
+    const id = setInterval(tick, document.hidden ? 10_000 : 3000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [watchKey, notify]);
+
+  const enablePlugin = useCallback(async (name: string) => {
+    try {
+      const r = await api<{ device: string }>("/api/plugins", { method: "POST", json: { name, action: "enable" } });
+      notify(`Enabling ${name}`, `On ${r.device}. Jarvis can use it in a few seconds.`, "ok");
+      setJobInfo((s) => Object.fromEntries(Object.entries(s).map(([k, v]) => [k, v.plugin?.name === name ? { ...v, enabled: true } : v])));
+    } catch (err) {
+      notify("Could not enable it", (err as Error).message, "err");
+    }
+  }, [notify]);
+
   const orbState: OrbState = voice.listening ? "listening" : voice.speaking ? "speaking" : chat.busy ? "thinking" : "idle";
   const pendingApprovals = Object.values(jobStatus).filter((s) => s === "needs_approval").length;
   const online = !!pulse && pulse.providers.length > 0;
@@ -130,11 +201,11 @@ export function Hud({ initial }: { initial: string }) {
 
   const quick = async (id: string) => {
     if (id === "youtube") return setPlayerOpen(true);
-    if (id === "tasks") return setView("tasks");
-    if (id === "browser") return setView("apps");
+    if (id === "tasks") return go("tasks");
+    if (id === "browser") return go("apps");
     if (id === "spotify") {
       setAppCommand({ url: "https://open.spotify.com", n: Date.now() });
-      return setView("apps");
+      return go("apps");
     }
     try {
       const res = await api<{ device: string; result: unknown }>("/api/devices/run", { method: "POST", json: { tool: "open_app", args: { name: QUICK_APPS[id] } } });
@@ -164,7 +235,7 @@ export function Hud({ initial }: { initial: string }) {
       <div className="backdrop" aria-hidden="true" />
       <TopBar
         view={view}
-        onView={(v) => setView(v)}
+        onView={go}
         online={online}
         voiceReplies={voiceReplies}
         onToggleVoice={() => {
@@ -175,11 +246,12 @@ export function Hud({ initial }: { initial: string }) {
         }}
         onNewChat={() => {
           chat.reset();
-          setView("chat");
+          go("chat");
         }}
         pendingApprovals={pendingApprovals}
         initial={initial}
       />
+      <ErrorBoundary key={view} name={view}>
       {view === "chat" ? (
         <main className="hud">
           <StatusPanel
@@ -203,6 +275,8 @@ export function Hud({ initial }: { initial: string }) {
               <Transcript
                 items={chat.items}
                 jobStatus={jobStatus}
+                jobInfo={jobInfo}
+                onEnablePlugin={enablePlugin}
                 onPlay={(v) => {
                   setVideo(v);
                   setPlayerOpen(true);
@@ -210,7 +284,7 @@ export function Hud({ initial }: { initial: string }) {
                 onDecide={decide}
                 onOpenJob={(id) => {
                   setFocusJob(id);
-                  setView("tasks");
+                  go("tasks");
                 }}
               />
             )}
@@ -236,9 +310,14 @@ export function Hud({ initial }: { initial: string }) {
         <AppsView
           command={appCommand}
           onCommand={(url) => setAppCommand({ url, n: Date.now() })}
+          onCommandDone={clearCommand}
           onYouTube={() => setPlayerOpen(true)}
           notify={notify}
         />
+      ) : view === "files" ? (
+        <FilesView notify={notify} />
+      ) : view === "code" ? (
+        <CodeView notify={notify} />
       ) : view === "tasks" ? (
         <TasksView focusId={focusJob} onFocus={setFocusJob} onChanged={refresh} notify={notify} />
       ) : view === "memory" ? (
@@ -246,6 +325,7 @@ export function Hud({ initial }: { initial: string }) {
       ) : (
         <SettingsView notify={notify} onChange={refresh} />
       )}
+      </ErrorBoundary>
       {playerOpen && <Player video={video} onPlay={setVideo} onClose={() => setPlayerOpen(false)} />}
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
     </div>

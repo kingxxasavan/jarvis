@@ -25,8 +25,9 @@ IS_WIN = sys.platform == "win32"
 MAX_SECONDS = 45 * 60
 
 # Claude Code gets file tools plus ordinary build commands, nothing broader.
-CLAUDE_TOOLS = ["Read", "Edit", "Write", "Glob", "Grep", "Bash(git:*)", "Bash(npm:*)", "Bash(npx:*)",
-                "Bash(node:*)", "Bash(python:*)", "Bash(pip:*)", "Bash(pytest:*)", "Bash(ls:*)", "Bash(mkdir:*)"]
+CLAUDE_TOOLS = ["Read", "Edit", "Write", "Glob", "Grep", "TodoWrite", "Bash(git:*)", "Bash(npm:*)", "Bash(npx:*)",
+                "Bash(node:*)", "Bash(python:*)", "Bash(py:*)", "Bash(pip:*)", "Bash(pytest:*)", "Bash(ls:*)", "Bash(dir:*)",
+                "Bash(mkdir:*)", "Bash(cat:*)", "Bash(pnpm:*)", "Bash(yarn:*)", "Bash(tsc:*)"]
 
 
 def _version_key(p: Path) -> tuple[int, ...]:
@@ -102,6 +103,16 @@ class RunResult:
     summary: str
     error: str = ""
     files: list[str] = field(default_factory=list)
+    session_id: str = ""
+
+
+def session_of(line: str) -> str:
+    """The conversation id Claude Code (session_id) or Codex (thread_id) reports, for resuming later."""
+    try:
+        e = json.loads(line)
+    except ValueError:
+        return ""
+    return str(e.get("session_id") or e.get("thread_id") or "") if isinstance(e, dict) else ""
 
 
 def parse_codex_event(line: str) -> tuple[str, str] | None:
@@ -158,13 +169,16 @@ def run_agent(
     cwd: Path,
     log: Callable[[str, str], None],
     cancelled: Callable[[], bool],
+    resume: str = "",
 ) -> RunResult:
+    resume = resume if re.match(r"^[\w-]{8,80}$", resume or "") else ""
     if agent == "codex":
-        cmd = [exe, "exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check", "-"]
+        cmd = [exe, "exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check"]
+        cmd += ["resume", resume, "-"] if resume else ["-"]
         parse = parse_codex_event
     else:
         cmd = [exe, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
-               "--allowedTools", *CLAUDE_TOOLS]
+               *(["--resume", resume] if resume else []), "--allowedTools", *CLAUDE_TOOLS]
         parse = parse_claude_event
 
     proc = subprocess.Popen(
@@ -198,8 +212,10 @@ def run_agent(
     threading.Thread(target=watchdog, daemon=True).start()
 
     last_say = ""
+    session = ""
     errors: list[str] = []
     for raw in proc.stdout:
+        session = session or session_of(raw)
         event = parse(raw.rstrip("\n"))
         if not event:
             continue
@@ -215,11 +231,11 @@ def run_agent(
     stop.set()
 
     if cancelled():
-        return RunResult(False, last_say, "Cancelled.")
+        return RunResult(False, last_say, "Cancelled.", session_id=session)
     if code != 0:
         detail = errors[-1] if errors else "\n".join(stderr_tail[-5:]) or f"exit code {code}"
         if re.search(r"log ?in|logged in|auth|unauthori[sz]ed|api key", detail, re.I):
             detail += f"  (Sign in once on this computer: run `{Path(exe).name} login`.)" if agent == "codex" else \
                       f"  (Sign in once on this computer: run `{Path(exe).name} auth login`.)"
-        return RunResult(False, last_say, detail[:1500])
-    return RunResult(True, last_say or "Finished without a summary.")
+        return RunResult(False, last_say, detail[:1500], session_id=session)
+    return RunResult(True, last_say or "Finished without a summary.", session_id=session)

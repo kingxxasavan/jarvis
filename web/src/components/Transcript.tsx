@@ -63,8 +63,11 @@ const STATUS_TEXT: Record<string, string> = {
   failed: "Failed", cancelled: "Cancelled", rejected: "Declined",
 };
 
-function JobCard({ job, status, onDecide, onOpen }: {
-  job: JobRef; status: string;
+export type JobInfo = { outcome?: string; plugin?: { name: string; valid: boolean }; enabled?: boolean };
+
+function JobCard({ job, status, info, onDecide, onOpen, onEnable }: {
+  job: JobRef; status: string; info?: JobInfo;
+  onEnable: (name: string) => void;
   onDecide: (id: string, action: "approve" | "reject") => void;
   onOpen: (id: string) => void;
 }) {
@@ -73,7 +76,20 @@ function JobCard({ job, status, onDecide, onOpen }: {
       <Icon name={job.tool === "create_plugin" ? "spark" : "code"} />
       <div className="grow">
         <div className="clip strong">{job.title}</div>
-        <div className="muted small">{job.device} · {STATUS_TEXT[status] || status}</div>
+        <div className="muted small">
+          {(status === "running" || status === "queued") && <i className="spin" />} {job.device} · {STATUS_TEXT[status] || status}
+        </div>
+        {info?.outcome && (status === "done" || status === "failed") && (
+          <div className={`job-outcome ${status === "failed" ? "err" : ""}`}><RichText text={info.outcome} /></div>
+        )}
+        {info?.plugin?.valid && (
+          <div className="row job-actions">
+            {info.enabled ? <span className="ok small"><Icon name="check" size={12} /> Enabled</span> : (
+              <button className="btn small primary" onClick={() => onEnable(info.plugin!.name)}><Icon name="check" size={14} /> Enable {info.plugin.name}</button>
+            )}
+            <button className="btn small ghost" onClick={() => onOpen(job.id)}>Read the code</button>
+          </div>
+        )}
       </div>
       {status === "needs_approval" ? (
         <>
@@ -87,21 +103,48 @@ function JobCard({ job, status, onDecide, onOpen }: {
   );
 }
 
-export function Transcript({ items, jobStatus, onPlay, onDecide, onOpenJob }: {
+export function Transcript({ items, jobStatus, jobInfo, onPlay, onDecide, onOpenJob, onEnablePlugin }: {
   items: ChatItem[];
   jobStatus: Record<string, string>;
+  jobInfo: Record<string, JobInfo>;
+  onEnablePlugin: (name: string) => void;
   onPlay: (v: VideoRef) => void;
   onDecide: (id: string, action: "approve" | "reject") => void;
   onOpenJob: (id: string) => void;
 }) {
-  const end = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
+  const frame = useRef(0);
   const last = items[items.length - 1];
+
   useEffect(() => {
-    end.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [items.length, last?.text, last?.tools.length]);
+    stick.current = true;
+  }, [items.length]);
+
+  // Follow new text only while the reader is at the bottom; scrolling up to
+  // read stays put. One instant jump per frame: a smooth scroll restarted on
+  // every streamed word is what made scrolling lag.
+  useEffect(() => {
+    const el = box.current;
+    if (!el || !stick.current) return;
+    cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+  }, [items.length, last?.text, last?.tools.length, last?.jobs.length, jobInfo]);
+
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
 
   return (
-    <div className="transcript" aria-live="polite">
+    <div
+      className="transcript"
+      aria-live="polite"
+      ref={box}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      }}
+    >
       {items.map((it) => (
         <div key={it.id} className={`msg ${it.role}`}>
           {it.role === "assistant" && it.tools.length > 0 && (
@@ -121,12 +164,11 @@ export function Transcript({ items, jobStatus, onPlay, onDecide, onOpenJob }: {
           ) : null}
           {it.play && <VideoCard video={it.play} onPlay={onPlay} />}
           {it.jobs.map((j) => (
-            <JobCard key={j.id} job={j} status={jobStatus[j.id] || j.status} onDecide={onDecide} onOpen={onOpenJob} />
+            <JobCard key={j.id} job={j} status={jobStatus[j.id] || j.status} info={jobInfo[j.id]} onEnable={onEnablePlugin} onDecide={onDecide} onOpen={onOpenJob} />
           ))}
           {it.error && <div className="bubble error">{it.error}</div>}
         </div>
       ))}
-      <div ref={end} />
     </div>
   );
 }

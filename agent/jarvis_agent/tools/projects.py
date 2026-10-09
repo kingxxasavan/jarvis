@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from ..coding import available, run_agent
+from ..config import JARVIS_REPO
 from ..registry import Tool, ToolContext, schema
+from . import files as fs
 
 DENY = re.compile(r"(^|[\\/])(\.env[^\\/]*|\.git|node_modules|\.venv|id_rsa[^\\/]*|.*\.pem|.*\.key)$", re.I)
 
@@ -24,9 +26,17 @@ built, where the main files are, and the exact command to run it.
 Task:
 """
 
+DIRECT = """You are working for the owner of this computer, who is typing to you remotely from the JARVIS website and
+cannot answer questions mid-run. Do exactly what they ask in this folder, make sensible decisions, run the
+project's own checks when there are any, and never print or commit secrets. Finish with a short plain summary
+(under 120 words) of what you changed and anything they must do next.
+
+Request:
+"""
 
 class Workspace:
-    def __init__(self, root: Path, codex_bin: str = "", claude_bin: str = ""):
+    def __init__(self, root: Path, codex_bin: str = "", claude_bin: str = "", restart=None):
+        self.restart = restart
         self.root = root
         self.codex_bin = codex_bin
         self.claude_bin = claude_bin
@@ -108,6 +118,82 @@ class Workspace:
             out["repo_url"] = self._publish(project, ctx)
         return out
 
+    def folder(self, raw: str) -> Path:
+        """A folder for a direct Code session: "jarvis", a workspace project, or any path under home."""
+        text = str(raw or "").strip()
+        if not text:
+            raise ValueError("Pick a folder.")
+        if text.lower() in ("jarvis", "jarvis code", str(JARVIS_REPO).lower()):
+            return JARVIS_REPO
+        if "/" not in text and "\\" not in text:
+            candidate = self.root / self.slug(text)
+            if candidate.exists() or not fs.resolve(text).exists():
+                return candidate
+        return fs.resolve(text)
+
+    def code_folders(self, args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+        self.root.mkdir(parents=True, exist_ok=True)
+        projects = sorted((p for p in self.root.iterdir() if p.is_dir() and not p.name.startswith(".")),
+                          key=lambda x: x.stat().st_mtime, reverse=True)
+        tools = available(self.codex_bin, self.claude_bin)
+        return {
+            "folders": [{"label": "JARVIS (this app's code)", "path": str(JARVIS_REPO)}]
+                       + [{"label": p.name, "path": str(p)} for p in projects[:60]],
+            "agents": [a for a in ("claude", "codex") if tools.get(a)],
+            "workspace": str(self.root),
+        }
+
+    def code_session(self, args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+        """Sir's own instructions to Claude Code (or Codex), typed on the Code tab."""
+        prompt = str(args.get("instructions") or "").strip()
+        if len(prompt) < 3:
+            raise ValueError("Type what Claude Code should do.")
+        folder = self.folder(str(args.get("folder") or ""))
+        tools = available(self.codex_bin, self.claude_bin)
+        wanted = str(args.get("agent") or "claude").lower()
+        agent = next((a for a in [wanted, "claude", "codex"] if tools.get(a)), None)
+        if not agent:
+            raise RuntimeError("Claude Code is not set up on this device. Run `py main.py claude-login` there once.")
+        folder.mkdir(parents=True, exist_ok=True)
+        resume = str(args.get("resume") or "") if agent == wanted else ""
+        ctx.log("log", f"{agent} in {folder}" + (" (continuing the conversation)" if resume else ""))
+        before = self._git(folder, "rev-parse", "HEAD").stdout.strip() if (folder / ".git").exists() else ""
+        result = run_agent(agent, tools[agent] or "", (DIRECT + prompt) if not resume else prompt, folder, ctx.log,
+                           ctx.cancelled, resume=resume)
+        out: dict[str, Any] = {"folder": str(folder), "agent": agent, "summary": result.summary, "session_id": result.session_id}
+        if (folder / ".git").exists():
+            changed = self._git(folder, "status", "--porcelain").stdout.splitlines()
+            out["files_changed"] = [line[3:] for line in changed][:300]
+            if args.get("commit") and changed:
+                sha, files = self._commit(folder, prompt[:60])
+                out["commit"], out["files_changed"] = sha, files
+            if args.get("push") and (out.get("commit") or self._git(folder, "rev-parse", "HEAD").stdout.strip() != before):
+                res = self._git(folder, "push")
+                ctx.log("log" if res.returncode == 0 else "error", (res.stderr or res.stdout).strip()[:500] or "Pushed.")
+                out["pushed"] = res.returncode == 0
+        if not result.ok:
+            raise RuntimeError(f"{agent} stopped: {result.error}")
+        return out
+
+    def restart_agent(self, args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+        """Optionally pull the latest JARVIS code, then restart this agent so changes load."""
+        notes = []
+        if args.get("update"):
+            res = self._git(JARVIS_REPO, "pull", "--ff-only")
+            notes.append((res.stdout or res.stderr).strip()[:500])
+            if res.returncode != 0:
+                raise RuntimeError(f"git pull failed: {notes[-1]}")
+            import sys
+
+            req = JARVIS_REPO / "agent" / "requirements.txt"
+            pip = subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "-r", str(req)],
+                                 capture_output=True, text=True, timeout=600)
+            notes.append("Requirements installed." if pip.returncode == 0 else f"pip: {pip.stderr.strip()[-400:]}")
+        if not self.restart:
+            raise RuntimeError("This agent cannot restart itself here.")
+        self.restart()
+        return {"restarting": True, "notes": notes, "note": "The agent restarts in a few seconds."}
+
     def _git(self, project: Path, *cmd: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(["git", "-c", "user.name=JARVIS", "-c", "user.email=jarvis@localhost", *cmd],
                               cwd=project, capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -154,4 +240,12 @@ class Workspace:
                 }, ["instructions", "project"]),
                 self.run_coding_agent, long_running=True, approval=True,
             ),
+            Tool("code_folders", "Folders the Code tab can work in.", schema(), self.code_folders, hidden=True),
+            Tool("code_session", "Sir's own instructions to Claude Code from the Code tab.",
+                 schema({"instructions": {"type": "string"}, "folder": {"type": "string"}, "agent": {"type": "string"},
+                         "resume": {"type": "string"}, "commit": {"type": "boolean"}, "push": {"type": "boolean"}},
+                        ["instructions", "folder"]),
+                 self.code_session, long_running=True, hidden=True),
+            Tool("restart_agent", "Restart the agent, optionally after pulling the latest JARVIS code.",
+                 schema({"update": {"type": "boolean"}}), self.restart_agent, hidden=True, timeout=60),
         ]
