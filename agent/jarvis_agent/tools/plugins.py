@@ -70,8 +70,9 @@ def check_draft(path: Path, name: str) -> dict[str, Any]:
 
 class Plugins:
     def __init__(self, codex_bin: str, claude_bin: str, builtin_names: Callable[[], set[str]], reload: Callable[[], None],
-                 save: Callable[..., None] | None = None):
+                 save: Callable[..., None] | None = None, auto_enable: bool = False):
         self.save = save
+        self.auto_enable = auto_enable
         self.codex_bin = codex_bin
         self.claude_bin = claude_bin
         self.builtin_names = builtin_names
@@ -94,7 +95,8 @@ class Plugins:
         wanted = str(args.get("agent") or "claude").lower()
         agent = next((a for a in [wanted, "claude", "codex"] if tools.get(a)), None)
         if not agent:
-            raise RuntimeError("Building a plugin needs Codex or Claude Code installed on this device.")
+            raise RuntimeError("Claude Code is not installed or not reachable on this device, so it cannot write the tool. "
+                               "Use build_tool instead: you write the code and it is installed directly.")
 
         draft = DRAFT_DIR / name
         if draft.exists():
@@ -105,7 +107,8 @@ class Plugins:
         result = run_agent(agent, tools[agent] or "", prompt, draft, ctx.log, ctx.cancelled)
         file = draft / "plugin.py"
         if not file.exists():
-            raise RuntimeError(f"{agent} did not produce plugin.py. {result.error or result.summary}"[:800])
+            raise RuntimeError(f"{agent} did not produce plugin.py: {result.error or result.summary}"[:800]
+                               + " Use build_tool to write the tool yourself instead.")
         verdict = check_draft(file, name)
         ctx.log("log" if verdict["valid"] else "error", "Plugin loads cleanly." if verdict["valid"] else f"Plugin problem: {verdict['problem']}")
         code = file.read_text(encoding="utf-8", errors="replace")[:60000]
@@ -117,8 +120,16 @@ class Plugins:
                 ctx.log("log", "Code saved to the JARVIS database (Tasks > Tools).")
             except Exception as exc:  # noqa: BLE001 - the draft is still on disk
                 ctx.log("error", f"Could not save the code to the database: {exc}")
+        enabled = False
+        if verdict["valid"] and self.auto_enable:
+            try:
+                self.enable({"name": name}, ctx)
+                enabled = True
+                ctx.log("log", f"'{name}' is switched on and ready to use.")
+            except Exception as exc:  # noqa: BLE001 - reported, the draft stays
+                ctx.log("error", f"Could not switch it on: {exc}")
         return {"name": name, "valid": verdict["valid"], "problem": verdict["problem"], "summary": result.summary,
-                "code": code, "saved_to_database": saved, "agent": agent}
+                "code": code, "saved_to_database": saved, "agent": agent, "enabled": enabled}
 
     def enable(self, args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
         name = self._name(args.get("name"))

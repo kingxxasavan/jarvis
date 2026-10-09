@@ -23,9 +23,13 @@ export const GET = route(async ({ sb }, req) => {
     if (error) throw new Error(error.message);
     return {
       jobs: (data || []).map((j) => {
-        const r = (j.result || {}) as { name?: string; valid?: boolean; problem?: string };
-        const plugin = j.tool === "create_plugin" && j.status === "done" && r.name ? { name: r.name, valid: !!r.valid } : undefined;
-        return { id: j.id, status: j.status, outcome: plugin ? (r.valid ? `Built the tool ${r.name}. Its code is saved in the database.` : `Built ${r.name}, but it does not load: ${r.problem || "unknown problem"}`) : outcome(j), plugin };
+        const r = (j.result || {}) as { name?: string; valid?: boolean; problem?: string; enabled?: boolean };
+        const plugin = j.tool === "create_plugin" && j.status === "done" && r.name ? { name: r.name, valid: !!r.valid, enabled: !!r.enabled } : undefined;
+        const built = !plugin ? outcome(j)
+          : !r.valid ? `Built ${r.name}, but it does not load: ${r.problem || "unknown problem"}`
+          : r.enabled ? `Built the tool ${r.name} and switched it on. Its code is saved in the database.`
+          : `Built the tool ${r.name}. Its code is saved in the database.`;
+        return { id: j.id, status: j.status, outcome: built, plugin };
       }),
     };
   }

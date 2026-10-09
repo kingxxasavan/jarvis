@@ -146,10 +146,10 @@ function Devices({ notify }: { notify: Notify }) {
       </div>
       {code && (
         <div className="pairing">
-          <p className="small">On <strong>{code.name}</strong>, in the <code>agent</code> folder, run this once. The code is shown only now.</p>
-          <pre className="code select">python main.py pair {code.code}</pre>
+          <p className="small">On <strong>{code.name}</strong>, run <code>install.cmd</code> and paste this code when it asks (or run <code>py main.py pair</code> with it in the <code>agent</code> folder). It is shown only now.</p>
+          <pre className="code select">{code.code}</pre>
           <div className="row">
-            <button className="btn small" onClick={() => navigator.clipboard.writeText(`python main.py pair ${code.code}`).then(() => notify("Copied", undefined, "ok"))}>Copy</button>
+            <button className="btn small" onClick={() => navigator.clipboard.writeText(code.code).then(() => notify("Copied", undefined, "ok"))}>Copy</button>
             <button className="btn small ghost" onClick={() => setCode(null)}>Done</button>
           </div>
         </div>

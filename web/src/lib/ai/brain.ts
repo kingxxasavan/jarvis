@@ -14,7 +14,7 @@ import type { JobRef, StreamEvent, VideoRef } from "./events.ts";
 import { systemPrompt } from "./persona.ts";
 import { complete, type Message, type ToolCall } from "./providers.ts";
 
-const MAX_ROUNDS = 8;
+const MAX_ROUNDS = 12;
 const HISTORY = 16;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

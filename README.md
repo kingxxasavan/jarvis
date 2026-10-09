@@ -24,51 +24,34 @@ The website works on its own. When a device agent is online, Jarvis can also use
 | Adaptive memory | After every reply a background pass adds, updates or deletes long-term facts. Recall blends meaning (NIM embeddings) with keywords, importance and recent use. Browse, edit and delete everything on the Memory page. |
 | Your profile | Import `about_me_complete.json` once. Unconfirmed or old details are marked so Jarvis checks them with you instead of assuming. |
 | arkia.buzz | Calendar, tasks and reminders (read, add, tick off), friends' messages. Unread messages and due reminders pop up and are spoken while Jarvis is open. |
-| Projects | "Build me a ... on my laptop": Codex or Claude Code runs on the device, the log streams into Tasks, the result is committed to git, optionally pushed to a private GitHub repo. Needs your approval. |
-| New abilities | When Jarvis has no tool for something, it says so in chat and has Claude Code write one. The code is import-checked and saved to the database (Tasks > Tools Jarvis built). Press **Enable** on the card in chat; then every Jarvis surface can use it, with no redeploy. Saved tools can be installed on another device from the Tasks page. |
-| Apps (streamed) | **Browser**: the laptop's real Chrome, with its own logins, streamed into the **Apps** tab with sound: browse, use the Spotify web player, sites the school network blocks. **Desktop**: the whole laptop screen with mouse and keyboard, so every installed app works (the Claude desktop app, Explorer, Word...). The **Laptop apps** list opens any installed app. VS Code opens through Microsoft's own VS Code tunnel. Runs through a Cloudflare Tunnel; each connection needs a short-lived pass from your signed-in JARVIS. |
+| Projects | "Build me a ... on my laptop": Claude Code (or Codex) runs on the device straight away, the log streams into Tasks, the result is committed to git, optionally pushed to a private GitHub repo. If Claude Code is not reachable, Jarvis writes the files itself. |
+| New abilities | When Jarvis has no tool for something, it says so in chat and has Claude Code write one (or writes it itself when Claude Code is unavailable). The code is import-checked, saved to the database (Tasks > Tools Jarvis built, and a tile in Apps) and switched on when it loads cleanly. Saved tools can be installed on another device from the Tasks page. |
+| Apps (streamed) | A home screen of icons: every app installed on the laptop (with its real icon), web apps (Spotify, YouTube, Gmail, Classroom, Claude...) and JARVIS's own sections. Each opens in a window with a Home button. Web apps run in the laptop's real Chrome with its logins and sound (sites the school network blocks work); laptop apps run on the laptop's screen (**Desktop**), with mouse and keyboard. Downloads appear under the icons and can save to the device you are on automatically; when a website on the laptop asks for a file, you pick it from the device you are on. Runs through a Cloudflare Tunnel; each connection needs a short-lived pass from your signed-in JARVIS. |
 | Files | The **Files** tab is a file manager for the laptop: browse Desktop, Documents, Downloads and more, view files in the page, download them to the device you are on, upload into any folder, or open them on the laptop. **Cloud files**: everything the laptop downloads (in the streamed Chrome or via Jarvis) is also copied to your Supabase storage, up to 50 MB a file, so it can be downloaded on any computer even when the laptop is off. Upload from any browser too, and send a cloud file back to the laptop. |
 | Code | The **Code** tab talks to Claude Code on the laptop directly: pick a folder (JARVIS's own code, a project, or any folder), type what to build or fix, watch the live log, and follow up in the same Claude Code conversation. Optionally commit and push. **Restart agent** and **Update from GitHub** load changes on the laptop without being there. |
 | Reading files | "What's in the spreadsheet I downloaded?": Jarvis reads xlsx, csv, Word, PowerPoint, PDF and text files on the laptop and answers in chat. |
 | Device control | Open apps, open pages, media/volume keys, system status, project files. Each action reports what it actually observed. |
 | Web | Live search and page reading through Ollama's web search API (same Ollama key). |
 
-## Updating an existing install (October 2026 update)
+## Install (from scratch)
 
-This update adds the Files and Code tabs, Desktop streaming, cloud files and saved tools. Once:
+You need three things: a Supabase project (database and login), the website on Vercel, and the laptop agent.
+If Supabase and Vercel are already set up, skip to step 3.
 
-1. Supabase > SQL Editor: paste all of `supabase/schema.sql` again and Run. It adds the `cloud_files` and `plugins`
-   tables and the private `jarvis-files` storage bucket. Safe to re-run.
-2. Vercel redeploys by itself from GitHub.
-3. On the laptop (this is the last time you need to be there for an update):
-
-```powershell
-Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" | Where-Object CommandLine -like '*main.py*run*' | ForEach-Object { Stop-Process -Id $_.ProcessId }
-cd ~\jarvis
-git pull
-cd agent
-py main.py setup
-Start-Process .venv\Scripts\pythonw.exe -ArgumentList "main.py","run" -WorkingDirectory (Get-Location)
-```
-
-After that, **Code > Update from GitHub** pulls new JARVIS code onto the laptop and restarts the agent remotely.
-
-If the site ever shows "Something on this page crashed", the message is on screen and also in Vercel > your project >
-Logs (search for `client-error`), with the browser and the exact error.
-
-## 1. Supabase (database and login)
+### 1. Supabase (database and login)
 
 1. Create a project at supabase.com (free tier is enough).
-2. SQL Editor > paste all of `supabase/schema.sql` > Run. It is safe to run again after updates.
+2. SQL Editor > paste all of `supabase/schema.sql` > Run. It is safe to run again after every update.
 3. Authentication > Sign In / Providers > Email: keep Email on, **turn off "Allow new users to sign up"**.
 4. Authentication > Users > Add user: your email and a strong password (tick "Auto confirm").
 5. Project Settings > API: note the Project URL and the **publishable** key.
 
-Use a long password: whoever signs in can control your paired devices. Two-factor (an authenticator-app code) is optional in Settings.
+Use a long password: whoever signs in can control your paired devices. Two-factor (an authenticator-app code) is
+optional in Settings.
 
-## 2. Vercel (the website)
+### 2. Vercel (the website)
 
-1. Push this repo to GitHub (private).
+1. Keep this repo on GitHub (private). Vercel deploys from it, and the laptop installer downloads it.
 2. vercel.com > Add New Project > import it > **Root Directory: `web`**.
 3. Add the environment variables from `web/.env.example`:
    - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
@@ -80,189 +63,70 @@ Use a long password: whoever signs in can control your paired devices. Two-facto
 
 Model ids change often. Before changing `NVIDIA_MODEL`, check https://integrate.api.nvidia.com/v1/models.
 
-## 3. First run in the browser
+### 3. The laptop: one install
 
-Settings, in this order:
+1. In JARVIS: **Settings > Devices**, type `Laptop`, press **Add device**, and copy the code it shows (shown once).
+2. On the laptop, get this repo: on github.com open the repo > **Code > Download ZIP**, and extract it anywhere
+   (or `git clone` it if Git is already installed).
+3. Double-click **`install.cmd`** in the extracted folder. Answer what it asks:
+   - a browser opens to sign in to **GitHub** (it downloads JARVIS to `C:\Users\<you>\jarvis` so updates work);
+   - paste the **pair code** from step 1;
+   - a browser opens to sign in to **Claude** (Claude Code uses your Claude account, no API key).
 
-1. Optional: **Turn on two-factor**.
+It installs Git, Python, Chrome, cloudflared, GitHub CLI, Node.js, the Claude desktop app, Claude Code, Codex and
+VS Code, sets up the agent, keeps the laptop awake on the charger with the lid closed and no password on wake,
+and starts JARVIS hidden with Windows. The ZIP folder can be deleted afterwards.
+
+At the end it prints a check: you want `connection OK` and a path (not "not installed") for chrome, cloudflared
+and claude. Within about 20 seconds the laptop shows as online in JARVIS.
+
+Then test from your phone or Chromebook: "open Spotify on my laptop", or **Apps > Spotify**. Sign in to Spotify
+and Google once in the streamed Chrome and they stay signed in.
+
+### 4. First run in the browser
+
+Settings, in this order (all optional):
+
+1. **Turn on two-factor**.
 2. **Import profile JSON**: pick `about_me_complete.json`.
-3. **arkia.buzz**: link with your arkia email and password (used once, never stored), or Google. For Google,
-   first add your Vercel domain under arkia's Firebase > Authentication > Settings > Authorized domains.
-4. Optional: **Import watch history** from Google Takeout (YouTube and YouTube Music > history > JSON) so
-   "play something I watched" covers videos watched outside Jarvis.
-5. **Devices > Add device**: copy the pair command it shows (shown once), then follow section 4.
+3. **arkia.buzz**: link with your arkia email and password (used once, never stored), or Google. For Google, first
+   add your Vercel domain under arkia's Firebase > Authentication > Settings > Authorized domains.
+4. **Import watch history** from Google Takeout (YouTube and YouTube Music > history > JSON).
 
-## 4. Laptop install (Windows 11, copy and paste)
+## Updating
 
-Do this on the always-on laptop (and later the home PC, with a different device name). Open **Terminal**
-(right-click Start > Terminal) and paste each block in order. Each block can be pasted whole.
+- **Website:** Vercel redeploys on every push to `main`. If an update says so, run `supabase/schema.sql` again.
+- **Laptop, from anywhere:** **Code > Update from GitHub** pulls the new code onto the laptop and restarts the agent.
+- **Laptop, in person:** run `install.cmd` again (in `C:\Users\<you>\jarvis`). It updates everything in place and
+  keeps the pairing.
 
-**Before you start:** in JARVIS, open Settings > Devices > **Add device**, name it `Laptop`, and keep the
-pair command it shows. It is shown only once.
+## Laptop notes
 
-### Step 1: install the tools
-
-```powershell
-winget install -e --id Git.Git --accept-package-agreements --accept-source-agreements
-winget install -e --id Python.Python.3.12 --accept-package-agreements
-winget install -e --id Google.Chrome --accept-package-agreements
-winget install -e --id Cloudflare.cloudflared --accept-package-agreements
-winget install -e --id GitHub.cli --accept-package-agreements
-winget install -e --id OpenJS.NodeJS.LTS --accept-package-agreements
-```
-
-If a line says a program is already installed, that is fine; it is skipped.
-
-**Close Terminal and open a new one** so it finds the new programs.
-
-### Step 2: sign in to GitHub
-
-```powershell
-gh auth login
-```
-
-Answer: GitHub.com > HTTPS > Yes > Login with a web browser. Sign in as `kingxxasavan`.
-
-### Step 3: download JARVIS and set up the agent
-
-```powershell
-cd ~
-gh repo clone kingxxasavan/jarvis
-cd ~\jarvis\agent
-py main.py setup
-```
-
-### Step 4: pair this laptop
-
-Paste the command from Settings > Devices, starting it with `py` instead of `python`:
-
-```powershell
-cd ~\jarvis\agent
-py main.py pair PASTE-YOUR-CODE-HERE
-```
-
-### Step 5: Claude Code from the Claude desktop app (so JARVIS can build projects)
-
-No API key needed: it runs on your Claude account. Already have the Claude app? Skip the install line.
-
-```powershell
-winget install -e --id Anthropic.Claude --accept-package-agreements
-```
-
-Open **Claude**, sign in, and open its **Code** tab once (that downloads the Claude Code engine JARVIS uses).
-Then sign that engine in once. The desktop app's own sign-in does not carry over, so this is needed:
-
-```powershell
-cd ~\jarvis\agent
-py main.py claude-login
-```
-
-A browser window opens for your Claude account. It finds Claude Code wherever the app installed it, stays signed
-in when the app updates, and says "Already signed in" if there is nothing to do.
-
-Optional, Codex (uses your ChatGPT account, also no API key):
-
-```powershell
-npm install -g @openai/codex
-codex.cmd login
-```
-
-### Step 6: keep it awake 24/7
-
-```powershell
-powercfg /change standby-timeout-ac 0
-powercfg /change hibernate-timeout-ac 0
-powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0
-powercfg /setactive SCHEME_CURRENT
-```
-
-Never sleeps on the charger, and closing the lid does nothing. Keep it plugged in.
-
-### Step 7: check everything
-
-```powershell
-cd ~\jarvis\agent
-py main.py doctor
-```
-
-You want `connection OK`, and a path (not "not installed") for chrome, cloudflared and claude. Codex only if you installed it.
-
-### Step 8: start with Windows, and start now
-
-```powershell
-cd ~\jarvis\agent
-py main.py autostart on
-py main.py
-```
-
-Within about 20 seconds it prints `JARVIS agent online as 'Laptop'` and `apps are reachable at https://...`.
-Leave this window open while you test from your phone or Chromebook:
-
-- Chat: "Open Spotify on my laptop".
-- Apps tab: the laptop's Chrome appears. Click into the page to type; the speaker icon turns sound on. Sign in to
-  Spotify and Google there once and they stay signed in.
+- Apps > **Desktop** needs Windows signed in and unlocked: the lock screen cannot be captured or controlled. The
+  installer turns off the password on wake; also set Settings > Accounts > Sign-in options > "If you've been away,
+  when should Windows require you to sign in again?" to **Never**, and leave the screen saver off.
 - Close the lid and check the Apps picture still moves. If it freezes, leave the lid slightly open.
-- Apps > **Desktop** shows the whole laptop screen. It needs Windows to be signed in and unlocked: the lock screen
-  cannot be captured or controlled. To stop it locking, Settings > Accounts > Sign-in options > "If you've been away,
-  when should Windows require you to sign in again?" > Never, and turn off the screen saver.
-
-When it works, close the window and run JARVIS hidden in the background:
-
-```powershell
-cd ~\jarvis\agent
-Start-Process .venv\Scripts\pythonw.exe -ArgumentList "main.py","run" -WorkingDirectory (Get-Location)
-```
-
-From now on it also starts by itself whenever you sign in to Windows. Logs: `~\jarvis\agent\data\agent.log`.
-
-### Optional: VS Code from anywhere
-
-```powershell
-winget install -e --id Microsoft.VisualStudioCode --accept-package-agreements
-```
-
-Open a new Terminal:
-
-```powershell
-code tunnel service install
-```
-
-Sign in with GitHub and note the machine name it prints. Then add it to the agent settings (replace the name):
-
-```powershell
-cd ~\jarvis\agent
-Add-Content .env "VSCODE_TUNNEL=PASTE-MACHINE-NAME-HERE"
-```
-
-Restart the agent (Step 9) and the VS Code button in Apps opens it.
-
-### Step 9: update JARVIS later
-
-```powershell
-Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" | Where-Object CommandLine -like '*main.py*run*' | ForEach-Object { Stop-Process -Id $_.ProcessId }
-cd ~\jarvis
-git pull
-cd agent
-py main.py setup
-Start-Process .venv\Scripts\pythonw.exe -ArgumentList "main.py","run" -WorkingDirectory (Get-Location)
-```
+- VS Code from anywhere: on the laptop run `code tunnel service install`, sign in with GitHub, then add
+  `VSCODE_TUNNEL=<machine name>` to `C:\Users\<you>\jarvis\agent\.env` and run `install.cmd` again.
+- Logs: `C:\Users\<you>\jarvis\agent\data\agent.log`. A health check: in that `agent` folder run `py main.py doctor`.
 
 ### If something is wrong
 
 | You see | Fix |
 | --- | --- |
-| `connection FAILED: ... removed or its token is wrong` | Add the device again in Settings and redo Step 4. |
-| `cloudflared` or `chrome` not installed | Redo its line from Step 1, then open a new Terminal. |
-| `running scripts is disabled` | Use `codex.cmd` exactly as written above. |
-| claude-login says Claude Code was not found | Open the Claude app's Code tab once, wait for it to load, then rerun it. |
-| A build fails with a sign-in error, or doctor says claude NOT signed in | Run `py main.py claude-login`. |
-| Apps tab says no device is streaming | Check the agent window shows `apps are reachable at https://...`. |
+| install.cmd says winget is missing | Microsoft Store > search "App Installer" > Update. Run install.cmd again. |
+| `connection FAILED: ... removed or its token is wrong` | Add the device again in Settings > Devices, delete `agent\.env`, run install.cmd again. |
+| doctor says claude NOT signed in, or builds fail with a sign-in error | In the `agent` folder run `py main.py claude-login`. Until then Jarvis writes code itself. |
+| Apps says no device is streaming | Check `agent.log` for `apps are reachable at https://...`; run install.cmd again if cloudflared is missing. |
+| Desktop is black or says the screen cannot be captured | Sign in to Windows on the laptop (it is locked). |
+| The site shows "Something on this page crashed" | The message is on screen and in Vercel > Logs (search `client-error`). |
 | Nothing works after a Windows Update restart | The agent starts when you sign in to Windows. Sign in once. |
 
-### Other settings (`~\jarvis\agent\.env`)
+### Settings (`C:\Users\<you>\jarvis\agent\.env`)
 
 - `JARVIS_WORKSPACE`: where projects are created (default `~\JarvisProjects`).
 - `JARVIS_DOWNLOADS`: where downloads go (default `~\Downloads\JARVIS`).
+- `JARVIS_ASK_FIRST=on`: put an approval card in front of coding runs again (off by default: JARVIS acts without asking).
 - `JARVIS_STREAM=off`: turn app streaming off on this device.
 - `JARVIS_CLOUD=off`: do not copy downloads to cloud files. `JARVIS_CLOUD_MAX_MB=50`: the largest file copied
   (Supabase's free plan allows 50 MB per file).
@@ -283,8 +147,11 @@ On Linux the same steps apply with `python3`, and `autostart on` installs a syst
   has row-level security. Two-factor is optional; once enabled it is enforced at every sign-in.
 - Devices never accept connections. The agent polls Supabase with a device token; the database functions it may
   call check the token's hash and only touch that device's jobs. It holds no service key and cannot read any table.
-- Code changes on a device (coding runs, new plugins) wait for your approval card. Plugins run only after you read
-  them and press Enable. Coding runs are committed to git, so any change can be reverted.
+  Cloud uploads go only into one-time slots the database opened for that device.
+- JARVIS acts without approval cards by default (you asked for this): coding runs, file writes and new tools run
+  straight away, and new tools switch on when they load cleanly. Set `JARVIS_ASK_FIRST=on` to bring the cards back.
+  File tools refuse system folders (Windows, Program Files, AppData) and secret files (.env, keys, .ssh). Coding
+  runs are committed to git, so changes can be reverted.
 - API keys live only in Vercel's server environment. The arkia token is AES-256-GCM encrypted at rest.
 - Web pages, friends' messages and tool output are passed to the model as data, never as instructions.
 
@@ -307,10 +174,11 @@ cd agent && python main.py test
 ## Layout
 
 ```
-supabase/schema.sql        tables, row-level security, memory search, device RPCs
+install.cmd, install.ps1   one-click laptop install and update (Windows)
+supabase/schema.sql        tables, row-level security, memory search, device RPCs, cloud files, saved tools
 web/src/proxy.ts           session refresh + owner/2FA gate for every request
 web/src/lib/ai/            providers (NIM -> Ollama), brain (tool loop), persona, stream events
-web/src/lib/tools/         web, youtube, memory, arkia, device tools (pc_* from each device's manifest)
+web/src/lib/tools/         web, youtube, memory, arkia, device tools (pc_* from each device's manifest), build_tool
 web/src/lib/memory/        store + hybrid recall, adaptive learning, profile import
 web/src/lib/arkia/         Firebase REST client, calendar recurrence (mirrors arkia's own rules)
 web/src/lib/youtube/       search / channel RSS / embeddability, watch history, Takeout parser

@@ -118,7 +118,7 @@ async function streamOnce(p: Provider, opts: Parameters<typeof complete>[0]): Pr
         model: p.model,
         messages: opts.messages,
         tools: opts.tools?.length ? opts.tools : undefined,
-        temperature: opts.temperature ?? 0.6,
+        temperature: opts.temperature ?? 0.4,
         max_tokens: opts.maxTokens ?? 4096,
         stream: true,
       },

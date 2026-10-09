@@ -135,6 +135,7 @@ class ChromeBrowser:
         self.scale = 0.85
         self._last_ack = 0.0
         self.downloads: dict[str, dict[str, Any]] = {}
+        self.chooser: dict[str, Any] | None = None  # a page's "choose file" waiting for the viewer
         self._lock = asyncio.Lock()
 
     # Lifecycle -------------------------------------------------------------------
@@ -263,6 +264,11 @@ class ChromeBrowser:
             for tid, sid in list(self.sessions.items()):
                 if sid == params.get("sessionId"):
                     self.sessions.pop(tid, None)
+        elif method == "Page.fileChooserOpened":
+            self.chooser = {"session": session, "node": params.get("backendNodeId"), "mode": params.get("mode", "selectSingle")}
+            self.uploads_dir.mkdir(parents=True, exist_ok=True)
+            asyncio.create_task(self.send_json({"type": "file_chooser", "multiple": params.get("mode") == "selectMultiple",
+                                                "folder": str(self.uploads_dir)}))
         elif method == "Browser.downloadWillBegin":
             self.downloads[params["guid"]] = {"name": params.get("suggestedFilename", "download"), "url": params.get("url", "")}
             asyncio.create_task(self.send_json({"type": "download", "name": self.downloads[params["guid"]]["name"], "state": "started"}))
@@ -280,6 +286,28 @@ class ChromeBrowser:
                 self.downloads.pop(guid, None)
                 asyncio.create_task(self.send_json({"type": "download", "name": d["name"], "state": state,
                                                     "bytes": params.get("totalBytes", 0)}))
+
+    @property
+    def uploads_dir(self) -> Path:
+        return self.downloads_dir / "Uploads"
+
+    async def choose_files(self, names: list[str]) -> None:
+        """Hands files the viewer uploaded (into Uploads) to the page's waiting file picker."""
+        chooser, self.chooser = self.chooser, None
+        if not chooser or not self.cdp:
+            raise RuntimeError("The page is no longer waiting for a file.")
+        root = self.uploads_dir.resolve()
+        files = []
+        for name in names[:20]:
+            path = (root / Path(str(name)).name).resolve()
+            if path.parent != root or not path.is_file():
+                raise ValueError(f"{name} was not uploaded.")
+            files.append(str(path))
+        if chooser["mode"] != "selectMultiple":
+            files = files[:1]
+        if not chooser.get("node"):
+            raise RuntimeError("This Chrome is too old to accept the file; update Chrome on the laptop.")
+        await self.cdp.call("DOM.setFileInputFiles", {"files": files, "backendNodeId": chooser["node"]}, chooser["session"])
 
     def _finish_download(self, guid: str, suggested: str) -> Path | None:
         from ..tools.apps import clean_name, unique_path
@@ -326,6 +354,11 @@ class ChromeBrowser:
             res = await self.cdp.call("Target.attachToTarget", {"targetId": target_id, "flatten": True})
             self.sessions[target_id] = res["sessionId"]
             await self.cdp.call("Page.enable", session=res["sessionId"])
+            try:
+                # File pickers go to the viewer, who chooses files on their own device.
+                await self.cdp.call("Page.setInterceptFileChooserDialog", {"enabled": True}, res["sessionId"])
+            except CdpError:
+                pass
         return self.sessions[target_id]
 
     async def activate(self, target_id: str) -> None:

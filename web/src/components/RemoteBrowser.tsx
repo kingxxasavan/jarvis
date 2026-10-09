@@ -58,10 +58,10 @@ function mods(e: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey
 export function RemoteBrowser({ conn, mode = "browser", command, onCommandDone, onReconnect, onDownload, notify }: {
   conn: StreamConn;
   mode?: StreamMode;
-  command: { url: string; n: number } | null;
+  command: { url: string; n: number; match?: string } | null;
   onCommandDone: () => void;
   onReconnect: () => void;
-  onDownload: () => void;
+  onDownload: (name?: string) => void;
   notify: (title: string, body?: string, tone?: "ok" | "err") => void;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
@@ -82,6 +82,29 @@ export function RemoteBrowser({ conn, mode = "browser", command, onCommandDone, 
   const [address, setAddress] = useState("");
   const [sound, setSound] = useState(false);
   const [quality, setQuality] = useState("normal");
+  const [chooser, setChooser] = useState<{ multiple: boolean; folder: string } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+
+  // A page on the laptop asked for a file: the file comes from this device.
+  const sendFiles = async (list: FileList | null) => {
+    if (!list?.length || !chooser) return;
+    setUploading(true);
+    try {
+      const form = new FormData();
+      for (const f of Array.from(list)) form.append("file", f, f.name);
+      const res = await fetch(`${conn.base}/fs/upload?t=${encodeURIComponent(conn.files)}&path=${encodeURIComponent(chooser.folder)}`, { method: "POST", body: form });
+      const data = (await res.json().catch(() => ({}))) as { saved?: string[]; error?: string };
+      if (!res.ok || !data.saved) throw new Error(data.error || `Upload failed (${res.status}).`);
+      send({ type: "file_chosen", names: data.saved });
+      setChooser(null);
+    } catch (err) {
+      notify("Could not send the file", (err as Error).message, "err");
+    } finally {
+      setUploading(false);
+      if (picker.current) picker.current.value = "";
+    }
+  };
 
   const send = useCallback((msg: object) => {
     if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(msg));
@@ -189,12 +212,14 @@ export function RemoteBrowser({ conn, mode = "browser", command, onCommandDone, 
       } else if (m.type === "download") {
         if (m.state === "completed") {
           notify("Download finished", String(m.name), "ok");
-          onDownload();
+          onDownload(String(m.name));
         } else if (m.state === "started") notify("Downloading on the laptop", String(m.name));
       } else if (m.type === "clipboard" && m.text) {
         void navigator.clipboard?.writeText(String(m.text)).catch(() => undefined);
       } else if (m.type === "error") {
         notify(desktop ? "Desktop" : "Browser", String(m.message), "err");
+      } else if (m.type === "file_chooser") {
+        setChooser({ multiple: !!m.multiple, folder: String(m.folder || "") });
       } else if (m.type === "notice") {
         notify(String(m.message), undefined, "ok");
       } else if (m.type === "status" && m.message) {
@@ -243,14 +268,25 @@ export function RemoteBrowser({ conn, mode = "browser", command, onCommandDone, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [send, quality, desktop]);
 
-  // Launcher commands wait until the connection is live, then run once. The
-  // parent clears the command right away, so coming back to Apps or
-  // reconnecting never replays it as another new tab.
+  // Launcher commands wait until the connection (and its tab list) is live,
+  // then run once. An app that already has a tab is switched to instead of
+  // opened again. The parent clears the command, so it never replays.
+  const tabsRef = useRef<Tab[]>([]);
+  tabsRef.current = tabs;
   useEffect(() => {
-    if (status === "live" && command?.url) {
-      send({ type: "new_tab", url: command.url });
+    if (status !== "live" || !command?.url) return;
+    const t = window.setTimeout(() => {
+      const existing = command.match ? tabsRef.current.find((tab) => {
+        try {
+          return new URL(tab.url).hostname.endsWith(command.match!.replace(/^www\./, ""));
+        } catch {
+          return false;
+        }
+      }) : undefined;
+      send(existing ? { type: "switch_tab", id: existing.id } : { type: "new_tab", url: command.url });
       onCommandDone();
-    }
+    }, 400);
+    return () => clearTimeout(t);
   }, [command, status, send, onCommandDone]);
 
   useEffect(() => () => {
@@ -488,6 +524,17 @@ export function RemoteBrowser({ conn, mode = "browser", command, onCommandDone, 
             }
           }}
         />
+        {chooser && (
+          <div className="rchooser" role="dialog" aria-label="The page wants a file">
+            <Icon name="upload" size={18} />
+            <span className="grow">The page on {conn.device.name} wants {chooser.multiple ? "files" : "a file"}.</span>
+            <button className="btn small primary" onClick={() => picker.current?.click()} disabled={uploading}>
+              {uploading ? <i className="spin" /> : null} Choose from this device
+            </button>
+            <button className="btn small ghost" onClick={() => setChooser(null)}>Cancel</button>
+            <input ref={picker} type="file" hidden multiple={chooser.multiple} onChange={(e) => sendFiles(e.target.files)} />
+          </div>
+        )}
         {status !== "live" && (
           <div className="roverlay">
             {status === "connecting" ? (

@@ -40,12 +40,13 @@ def build_registry(cfg: Config, stream_getter=lambda: None, cloud=None, api: Dev
                    restart=None) -> Registry:
     ws = projects.Workspace(cfg.workspace, cfg.codex_bin, cfg.claude_bin, restart=restart)
     apps = app_tools.AppTools(cfg.downloads_dir, stream_getter, cloud)
-    registry = Registry(builtins=[])
+    registry = Registry(builtins=[], ask_first=cfg.ask_first)
     plug = plugin_tools.Plugins(
         cfg.codex_bin, cfg.claude_bin,
         builtin_names=lambda: {t.name for t in registry.builtins},
         reload=lambda: registry.reload_plugins(),
         save=api.save_plugin if api else None,
+        auto_enable=not cfg.ask_first,
     )
     registry.builtins = [*system.TOOLS, *files.Files(cfg.downloads_dir).tools(), *ws.tools(), *apps.tools(), *plug.tools()]
     registry.reload_plugins()

@@ -24,6 +24,7 @@ export const RATE_KEY = "jarvis.rate";
 export function cleanForSpeech(text: string): string {
   return text
     .replace(/```[\s\S]*?```/g, " (code is on screen). ")
+    .replace(/(?:^\s*\|.*\|\s*$\n?)+/gm, " (the table is on screen). ")
     .replace(/[:,;.]?[ \t]*\n\s*(?:[-*•]|\d+[.)])\s+/g, ". ") // each list item becomes its own sentence
     .replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, "")
     .split(/(?<=[.!?])\s+/)

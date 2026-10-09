@@ -190,6 +190,25 @@ class Files:
         return {"file": str(path), **info, "content": text[:MAX_CHARS], "truncated": cut,
                 "note": "This is the file's actual content. Answer from it directly." + (" It was cut to fit." if cut else "")}
 
+    def write_file(self, args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+        """Writes a text file (code, notes, a web page...). Used when Jarvis builds something itself."""
+        raw = str(args.get("path") or "").strip()
+        content = args.get("content")
+        if not raw or not isinstance(content, str):
+            raise ValueError("Give a path and the file's text content.")
+        if len(content) > 2_000_000:
+            raise ValueError("That is over 2 MB of text; split it into several files.")
+        path = resolve(raw)
+        if SECRET_FILE.search(str(path)):
+            raise PermissionError("That name is reserved for secrets and keys, so JARVIS does not write it.")
+        if path.is_dir():
+            raise IsADirectoryError(f"{path} is a folder; give a file name inside it.")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existed = path.exists()
+        with open(path, "a" if args.get("append") else "w", encoding="utf-8", newline="") as f:
+            f.write(content)
+        return {"written": str(path), "bytes": len(content.encode("utf-8")), "replaced": existed and not args.get("append")}
+
     def open_file(self, args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
         path = find_file(str(args.get("path") or ""), self.downloads_dir)
         if IS_WIN:
@@ -210,6 +229,12 @@ class Files:
                  "sheet, Word, PowerPoint, PDF and text files as text. Use this to show or summarise a file's data in chat; "
                  "never start a coding agent just to read a file.", schema(file_arg, ["path"]), self.read_file, timeout=60),
             Tool("open_file", "Open a file in its default app on this device's screen.", schema(file_arg, ["path"]), self.open_file),
+            Tool("write_file", "Create or overwrite a text file on this device (code, HTML, notes, scripts). Folders are created "
+                 "as needed. Use it to build things yourself when Claude Code is not available, or for small files.",
+                 schema({"path": {"type": "string", "description": "e.g. 'Desktop/site/index.html' or 'JarvisProjects/app/main.py'"},
+                         "content": {"type": "string", "description": "The full text of the file"},
+                         "append": {"type": "boolean", "description": "Add to the end instead of replacing"}}, ["path", "content"]),
+                 self.write_file),
         ]
 
 

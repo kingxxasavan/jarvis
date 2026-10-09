@@ -1,61 +1,73 @@
 "use client";
+// The taskbar along the bottom, like a desktop OS: JARVIS on the left, the
+// sections in the middle, status, voice and the clock on the right.
+import { useEffect, useState } from "react";
 import { Icon } from "./Icon";
 
 export type View = "chat" | "apps" | "files" | "code" | "tasks" | "memory" | "settings";
 
-const TABS: { id: View; label: string }[] = [
-  { id: "chat", label: "Chat" },
-  { id: "apps", label: "Apps" },
-  { id: "files", label: "Files" },
-  { id: "code", label: "Code" },
-  { id: "tasks", label: "Tasks" },
-  { id: "memory", label: "Memory" },
-  { id: "settings", label: "Settings" },
+const TABS: { id: View; label: string; icon: string }[] = [
+  { id: "chat", label: "Chat", icon: "chat" },
+  { id: "apps", label: "Apps", icon: "grid" },
+  { id: "files", label: "Files", icon: "folder" },
+  { id: "code", label: "Code", icon: "code" },
+  { id: "tasks", label: "Tasks", icon: "tasks" },
+  { id: "memory", label: "Memory", icon: "memory" },
+  { id: "settings", label: "Settings", icon: "gear" },
 ];
 
-export function TopBar({ view, onView, online, voiceReplies, onToggleVoice, onNewChat, pendingApprovals, initial }: {
+function Clock() {
+  const [now, setNow] = useState<Date | null>(null);
+  useEffect(() => {
+    setNow(new Date());
+    const id = setInterval(() => setNow(new Date()), 15_000);
+    return () => clearInterval(id);
+  }, []);
+  if (!now) return null;
+  return (
+    <span className="clock" title={now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}>
+      <span>{now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
+      <span className="muted">{now.toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+    </span>
+  );
+}
+
+export function TopBar({ view, onView, online, devicesOnline, voiceReplies, onToggleVoice, onNewChat, pendingApprovals, busy }: {
   view: View;
   onView: (v: View) => void;
   online: boolean;
+  devicesOnline: number;
   voiceReplies: boolean;
   onToggleVoice: () => void;
   onNewChat: () => void;
   pendingApprovals: number;
-  initial: string;
+  busy: boolean;
+  initial?: string;
 }) {
   return (
-    <header className="topbar">
-      <div className="brand">
-        <span className="wordmark">J.A.R.V.I.S.</span>
-        <span className={`status ${online ? "ok" : "warn"}`}>
-          <i />
-          {online ? "Online" : "Degraded"}
-        </span>
-      </div>
-      <nav className="tabs" aria-label="Sections">
+    <nav className="taskbar" aria-label="JARVIS">
+      <button className={`start ${busy ? "busy" : ""}`} onClick={() => onView("chat")} title="JARVIS" aria-label="JARVIS chat">
+        <span className="start-core" />
+      </button>
+      <div className="dock" role="tablist">
         {TABS.map((t) => (
-          <button key={t.id} className={view === t.id ? "active" : ""} onClick={() => onView(t.id)}>
-            {t.label}
+          <button key={t.id} role="tab" aria-selected={view === t.id} className={view === t.id ? "active" : ""} onClick={() => onView(t.id)} title={t.label}>
+            <Icon name={t.icon} size={19} />
+            <span className="dock-label">{t.label}</span>
             {t.id === "tasks" && pendingApprovals > 0 && <span className="badge">{pendingApprovals}</span>}
           </button>
         ))}
-      </nav>
-      <div className="actions">
-        <button className="icon-btn" onClick={onNewChat} title="New conversation" aria-label="New conversation">
-          <Icon name="plus" />
-        </button>
-        <button
-          className={`icon-btn ${voiceReplies ? "on" : ""}`}
-          onClick={onToggleVoice}
-          title={voiceReplies ? "Spoken replies on" : "Spoken replies off"}
-          aria-label="Toggle spoken replies"
-        >
-          <Icon name={voiceReplies ? "speaker" : "mute"} />
-        </button>
-        <button className="avatar" onClick={() => onView("settings")} title="Settings" aria-label="Settings">
-          {initial}
-        </button>
       </div>
-    </header>
+      <div className="tray">
+        <span className={`tray-status ${online ? "ok" : "warn"}`} title={online ? "AI online" : "AI degraded: check the provider keys"}>
+          <i /> <span className="tray-text">{devicesOnline ? `${devicesOnline} device${devicesOnline > 1 ? "s" : ""}` : "No device"}</span>
+        </span>
+        <button className="icon-btn tray-new" onClick={onNewChat} title="New conversation" aria-label="New conversation"><Icon name="plus" size={17} /></button>
+        <button className={`icon-btn ${voiceReplies ? "on" : ""}`} onClick={onToggleVoice} title={voiceReplies ? "Spoken replies on" : "Spoken replies off"} aria-label="Toggle spoken replies">
+          <Icon name={voiceReplies ? "speaker" : "mute"} size={17} />
+        </button>
+        <Clock />
+      </div>
+    </nav>
   );
 }

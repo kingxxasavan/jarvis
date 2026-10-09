@@ -72,6 +72,7 @@ class Config:
     cloud_enabled: bool = True
     cloud_max_mb: int = 50
     audio_device: str = ""
+    ask_first: bool = False
 
     @staticmethod
     def load() -> "Config":
@@ -100,6 +101,7 @@ class Config:
             cloud_enabled=env.get("JARVIS_CLOUD", "on").lower() not in ("off", "0", "false", "no"),
             cloud_max_mb=int(env.get("JARVIS_CLOUD_MAX_MB", "50") or 50),
             audio_device=env.get("JARVIS_AUDIO_DEVICE", ""),
+            ask_first=env.get("JARVIS_ASK_FIRST", "off").lower() in ("on", "1", "true", "yes"),
         )
 
 

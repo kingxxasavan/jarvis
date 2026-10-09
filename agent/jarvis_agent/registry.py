@@ -43,10 +43,10 @@ class Tool:
     timeout: int = 20
     plugin: bool = False
 
-    def manifest(self) -> dict[str, Any]:
+    def manifest(self, ask_first: bool = False) -> dict[str, Any]:
         out: dict[str, Any] = {"name": self.name, "description": self.description, "parameters": self.parameters}
         for key in ("long_running", "approval", "hidden"):
-            if getattr(self, key):
+            if getattr(self, key) and (key != "approval" or ask_first):
                 out[key] = True
         if self.timeout != 20:
             out["timeout"] = self.timeout
@@ -106,6 +106,8 @@ class Registry:
     builtins: list[Tool]
     plugins: dict[str, Tool] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
+    # JARVIS_ASK_FIRST=on puts an approval card in front of coding runs again.
+    ask_first: bool = False
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def reload_plugins(self) -> None:
@@ -143,4 +145,4 @@ class Registry:
         return next((t for t in self.all() if t.name == name), None)
 
     def manifest(self) -> list[dict[str, Any]]:
-        return [t.manifest() for t in self.all()]
+        return [t.manifest(self.ask_first) for t in self.all()]

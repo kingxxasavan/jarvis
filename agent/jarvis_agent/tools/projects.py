@@ -97,8 +97,8 @@ class Workspace:
         order = [wanted] + [a for a in ("codex", "claude") if a != wanted]
         agent = next((a for a in order if tools.get(a)), None)
         if not agent:
-            raise RuntimeError("Neither Codex nor Claude Code is installed on this device. Install one: "
-                               "`npm i -g @openai/codex` or `npm i -g @anthropic-ai/claude-code`, then sign in.")
+            raise RuntimeError("Neither Claude Code nor Codex is installed on this device (rerun install.cmd to add Claude Code). "
+                               "Fallback: write the files yourself with pc_write_file.")
         if agent != wanted:
             ctx.log("log", f"{wanted} is not installed here; using {agent} instead.")
 
@@ -113,7 +113,8 @@ class Workspace:
         out: dict[str, Any] = {"project": project.name, "path": str(project), "agent": agent, "summary": result.summary,
                                "commit": commit, "files_changed": files}
         if not result.ok:
-            raise RuntimeError(f"{agent} stopped: {result.error}" + (f" (work so far saved as commit {commit})" if commit else ""))
+            hint = " Fallback: write the files yourself with pc_write_file." if re.search(r"sign|log ?in|auth|not found|credit|limit", result.error, re.I) else ""
+            raise RuntimeError(f"{agent} stopped: {result.error}" + (f" (work so far saved as commit {commit})" if commit else "") + hint)
         if args.get("publish_github"):
             out["repo_url"] = self._publish(project, ctx)
         return out

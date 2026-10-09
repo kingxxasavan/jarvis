@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useEffect, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import type { ChatItem } from "@/hooks/useChat";
 import type { JobRef, VideoRef } from "@/lib/ai/events";
 import { Icon } from "./Icon";
@@ -23,17 +23,69 @@ function inline(text: string): ReactNode[] {
   return out;
 }
 
+function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button className="copy-btn" onClick={() => {
+      void navigator.clipboard?.writeText(text).then(() => {
+        setDone(true);
+        setTimeout(() => setDone(false), 1500);
+      }).catch(() => undefined);
+    }} title={label} aria-label={label}>
+      <Icon name={done ? "check" : "copy"} size={13} /> {done ? "Copied" : label}
+    </button>
+  );
+}
+
+function Table({ lines }: { lines: string[] }) {
+  const rows = lines.filter((l) => !/^\s*\|?\s*:?-{2,}/.test(l)).map((l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
+  const [head, ...body] = rows;
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead><tr>{head.map((c, i) => <th key={i}>{inline(c)}</th>)}</tr></thead>
+        <tbody>{body.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{inline(c)}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+  );
+}
+
 function RichText({ text }: { text: string }) {
-  const blocks = text.split(/\n{2,}/);
+  // Split out fenced code first so blank lines inside code stay in the block.
+  const parts = text.split(/(```[\s\S]*?(?:```|$))/g).filter((p) => p.trim());
   return (
     <>
-      {blocks.map((b, i) => {
-        if (b.startsWith("```")) return <pre key={i}>{b.replace(/^```\w*\n?|```$/g, "")}</pre>;
-        const lines = b.split("\n");
-        if (lines.every((l) => /^\s*([-*]|\d+\.)\s+/.test(l))) {
-          return <ul key={i}>{lines.map((l, j) => <li key={j}>{inline(l.replace(/^\s*([-*]|\d+\.)\s+/, ""))}</li>)}</ul>;
+      {parts.map((part, pi) => {
+        if (part.startsWith("```")) {
+          const m = part.match(/^```([\w+-]*)\n?([\s\S]*?)(?:```)?$/);
+          const lang = m?.[1] || "";
+          const code = (m?.[2] ?? part).replace(/\n$/, "");
+          return (
+            <div key={pi} className="codeblock">
+              <div className="codeblock-bar"><span>{lang || "code"}</span><CopyButton text={code} /></div>
+              <pre>{code}</pre>
+            </div>
+          );
         }
-        return <p key={i}>{lines.map((l, j) => <Fragment key={j}>{j > 0 && <br />}{inline(l)}</Fragment>)}</p>;
+        return part.split(/\n{2,}/).map((b, i) => {
+          const key = `${pi}-${i}`;
+          const lines = b.split("\n").filter((l) => l.trim());
+          if (!lines.length) return null;
+          if (lines.length >= 2 && lines.every((l) => /^\s*\|.*\|\s*$/.test(l))) return <Table key={key} lines={lines} />;
+          if (lines.every((l) => /^\s*([-*•]|\d+[.)])\s+/.test(l))) {
+            const ordered = /^\s*\d/.test(lines[0]);
+            const items = lines.map((l, j) => <li key={j}>{inline(l.replace(/^\s*([-*•]|\d+[.)])\s+/, ""))}</li>);
+            return ordered ? <ol key={key}>{items}</ol> : <ul key={key}>{items}</ul>;
+          }
+          return (
+            <p key={key}>
+              {lines.map((l, j) => {
+                const h = l.match(/^#{1,4}\s+(.*)$/);
+                return <Fragment key={j}>{j > 0 && <br />}{h ? <strong>{inline(h[1])}</strong> : inline(l)}</Fragment>;
+              })}
+            </p>
+          );
+        });
       })}
     </>
   );
@@ -63,7 +115,7 @@ const STATUS_TEXT: Record<string, string> = {
   failed: "Failed", cancelled: "Cancelled", rejected: "Declined",
 };
 
-export type JobInfo = { outcome?: string; plugin?: { name: string; valid: boolean }; enabled?: boolean };
+export type JobInfo = { outcome?: string; plugin?: { name: string; valid: boolean; enabled?: boolean }; enabled?: boolean };
 
 function JobCard({ job, status, info, onDecide, onOpen, onEnable }: {
   job: JobRef; status: string; info?: JobInfo;
@@ -84,7 +136,7 @@ function JobCard({ job, status, info, onDecide, onOpen, onEnable }: {
         )}
         {info?.plugin?.valid && (
           <div className="row job-actions">
-            {info.enabled ? <span className="ok small"><Icon name="check" size={12} /> Enabled</span> : (
+            {info.enabled || info.plugin.enabled ? <span className="ok small"><Icon name="check" size={12} /> Enabled</span> : (
               <button className="btn small primary" onClick={() => onEnable(info.plugin!.name)}><Icon name="check" size={14} /> Enable {info.plugin.name}</button>
             )}
             <button className="btn small ghost" onClick={() => onOpen(job.id)}>Read the code</button>
@@ -157,8 +209,18 @@ export function Transcript({ items, jobStatus, jobInfo, onPlay, onDecide, onOpen
               ))}
             </div>
           )}
+          {it.role === "assistant" && it.tools.some((c) => c.state === "error" && c.note) && (
+            <div className="tool-errors">
+              {it.tools.filter((c) => c.state === "error" && c.note).map((c) => (
+                <div key={c.id} className="small"><strong>{c.label}:</strong> {c.note}</div>
+              ))}
+            </div>
+          )}
           {it.text ? (
-            <div className="bubble"><RichText text={it.text} /></div>
+            <div className="bubble">
+              <RichText text={it.text} />
+              {it.role === "assistant" && !it.pending && it.text.length > 40 && <div className="bubble-actions"><CopyButton text={it.text} /></div>}
+            </div>
           ) : it.pending && !it.tools.some((c) => c.state === "start") ? (
             <div className="bubble thinking"><i /><i /><i /></div>
           ) : null}

@@ -14,7 +14,7 @@ import { Player } from "./Player";
 import { Toasts, type Toast } from "./Toasts";
 import { TopBar, type View } from "./TopBar";
 import { Transcript, type JobInfo } from "./Transcript";
-import { AppsView } from "./views/AppsView";
+import { AppsView, type AppCommand } from "./views/AppsView";
 import { CodeView } from "./views/CodeView";
 import { FilesView } from "./views/FilesView";
 import { MemoryView } from "./views/MemoryView";
@@ -43,7 +43,7 @@ export function Hud({ initial }: { initial: string }) {
   const [provider, setProvider] = useState("");
   const [jobStatus, setJobStatus] = useState<Record<string, string>>({});
   const [jobInfo, setJobInfo] = useState<Record<string, JobInfo>>({});
-  const [appCommand, setAppCommand] = useState<{ url: string; n: number } | null>(null);
+  const [appCommand, setAppCommand] = useState<AppCommand | null>(null);
   const viaVoice = useRef(false);
   const clearCommand = useCallback(() => setAppCommand(null), []);
   const interacted = useRef(false);
@@ -99,7 +99,10 @@ export function Hud({ initial }: { initial: string }) {
       log("tasks", j.title, "run");
     },
     onTool: (c: ToolChip) => {
-      if (c.name === "pc_browser_open" && c.state === "done") go("apps");
+      if (c.name === "pc_browser_open" && c.state === "done") {
+        setAppCommand({ url: "", n: Date.now() });
+        go("apps");
+      }
       if (c.state !== "start") log(TOOL_ICON[c.name] || (c.name.startsWith("pc_") ? "device" : "spark"), c.label, c.state === "done" ? "ok" : "err");
     },
     onProvider: setProvider,
@@ -204,7 +207,7 @@ export function Hud({ initial }: { initial: string }) {
     if (id === "tasks") return go("tasks");
     if (id === "browser") return go("apps");
     if (id === "spotify") {
-      setAppCommand({ url: "https://open.spotify.com", n: Date.now() });
+      setAppCommand({ url: "https://open.spotify.com", n: Date.now(), match: "open.spotify.com" });
       return go("apps");
     }
     try {
@@ -233,24 +236,7 @@ export function Hud({ initial }: { initial: string }) {
   return (
     <div className="app">
       <div className="backdrop" aria-hidden="true" />
-      <TopBar
-        view={view}
-        onView={go}
-        online={online}
-        voiceReplies={voiceReplies}
-        onToggleVoice={() => {
-          const next = !voiceReplies;
-          setVoiceReplies(next);
-          store.set(SPEAK_KEY, next ? "1" : "0");
-          if (!next) voice.stopSpeaking();
-        }}
-        onNewChat={() => {
-          chat.reset();
-          go("chat");
-        }}
-        pendingApprovals={pendingApprovals}
-        initial={initial}
-      />
+
       <ErrorBoundary key={view} name={view}>
       {view === "chat" ? (
         <main className="hud">
@@ -309,7 +295,8 @@ export function Hud({ initial }: { initial: string }) {
       ) : view === "apps" ? (
         <AppsView
           command={appCommand}
-          onCommand={(url) => setAppCommand({ url, n: Date.now() })}
+          onCommand={(url, match) => setAppCommand({ url, n: Date.now(), match })}
+          onView={go}
           onCommandDone={clearCommand}
           onYouTube={() => setPlayerOpen(true)}
           notify={notify}
@@ -326,6 +313,25 @@ export function Hud({ initial }: { initial: string }) {
         <SettingsView notify={notify} onChange={refresh} />
       )}
       </ErrorBoundary>
+      <TopBar
+        view={view}
+        onView={go}
+        online={online}
+        voiceReplies={voiceReplies}
+        onToggleVoice={() => {
+          const next = !voiceReplies;
+          setVoiceReplies(next);
+          store.set(SPEAK_KEY, next ? "1" : "0");
+          if (!next) voice.stopSpeaking();
+        }}
+        onNewChat={() => {
+          chat.reset();
+          go("chat");
+        }}
+        pendingApprovals={pendingApprovals}
+        devicesOnline={pulse?.devices.filter((d) => d.online).length ?? 0}
+        busy={chat.busy}
+      />
       {playerOpen && <Player video={video} onPlay={setVideo} onClose={() => setPlayerOpen(false)} />}
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
     </div>

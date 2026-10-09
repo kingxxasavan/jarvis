@@ -37,6 +37,7 @@ from .audio import AudioCapture
 from ..tools import files as fs
 from .chrome import ChromeBrowser
 from .desktop import DesktopScreen
+from .icons import AppIcons
 from .tunnel import Tunnel
 
 log = logging.getLogger("jarvis.stream")
@@ -110,6 +111,7 @@ class StreamService:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.browser = ChromeBrowser(data_dir / "chrome-profile", downloads_dir, chrome_bin, self._send_frame, self._send_json,
                                      on_downloaded=self._downloaded)
+        self.icons = AppIcons(data_dir / "icons")
         self.desktop = DesktopScreen(self._send_desktop_frame, self._send_desktop_json)
         self.audio = AudioCapture(self._on_audio, audio_device, on_error=lambda m: self._notify(m, "error"))
         self.tunnel = Tunnel(port, self._on_url, tunnel_token, public_url)
@@ -147,6 +149,9 @@ class StreamService:
             web.post("/fs/upload", self._fs_upload),
             web.post("/fs/open", self._fs_open),
             web.post("/fs/cloud", self._fs_cloud),
+            web.get("/apps", self._apps),
+            web.get("/apps/icon", self._app_icon),
+            web.post("/apps/open", self._app_open),
         ])
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -331,6 +336,9 @@ class StreamService:
             await b.activate(str(m.get("id", "")))
         elif kind == "close_tab":
             await b.close_tab(str(m.get("id", "")))
+        elif kind == "file_chosen":
+            names = m.get("names")
+            await self.browser.choose_files([str(n) for n in names] if isinstance(names, list) else [])
         elif kind == "audio":
             client.audio = bool(m.get("on"))
             self._update_audio()
@@ -361,6 +369,34 @@ class StreamService:
             return web.json_response({"error": "not found"}, status=404, headers=CORS)
         quoted = path.name.replace('"', "")
         return web.FileResponse(path, headers={**CORS, "Content-Disposition": f'attachment; filename="{quoted}"'})
+
+    # Installed apps -------------------------------------------------------------
+
+    async def _apps(self, request: web.Request) -> web.Response:
+        if not self._authorized(request, "files"):
+            return web.json_response({"error": "expired"}, status=403, headers=CORS)
+        names = await asyncio.to_thread(self.icons.names)
+        self.icons.ensure()
+        return web.json_response({"apps": names}, headers=CORS)
+
+    async def _app_icon(self, request: web.Request) -> web.StreamResponse:
+        if not self._authorized(request, "files"):
+            return web.json_response({"error": "expired"}, status=403, headers=CORS)
+        path = self.icons.path(request.query.get("name", ""))
+        if not path:
+            return web.Response(status=404, headers=CORS)
+        return web.FileResponse(path, headers={**CORS, "Content-Type": "image/png", "Cache-Control": "private, max-age=86400"})
+
+    async def _app_open(self, request: web.Request) -> web.Response:
+        if not self._authorized(request, "files"):
+            return web.json_response({"error": "expired"}, status=403, headers=CORS)
+        from ..tools.system import open_app
+
+        try:
+            result = await asyncio.to_thread(open_app, {"name": request.query.get("name", "")}, None)
+            return web.json_response(result, headers=CORS)
+        except (LookupError, ValueError, OSError) as exc:
+            return web.json_response({"error": str(exc)}, status=404, headers=CORS)
 
     # File manager ----------------------------------------------------------------
 

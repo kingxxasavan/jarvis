@@ -372,3 +372,57 @@ def test_plugin_installs_from_saved_code(tmp_path, monkeypatch):
            "def run(args):\n    return 'hi'\n"
     assert p.enable({"name": "say_hi", "code": code}, ctx())["enabled"] == "say_hi"
     assert (tmp_path / "say_hi.py").read_text() == code and reloaded
+
+
+# No approval by default, writing files, uploads into web pages ------------------------
+
+def test_approval_only_when_ask_first():
+    t = Tool("run_coding_agent", "builds things", schema(), lambda a, c: None, long_running=True, approval=True)
+    assert "approval" not in Registry(builtins=[t]).manifest()[0]
+    assert Registry(builtins=[t], ask_first=True).manifest()[0]["approval"] is True
+
+
+def test_write_file_creates_folders_and_refuses_secrets(tmp_path, monkeypatch):
+    from jarvis_agent.tools import files
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    f = files.Files(tmp_path)
+    out = f.write_file({"path": "JarvisProjects/site/index.html", "content": "<h1>hi</h1>"}, ctx())
+    assert (tmp_path / "JarvisProjects" / "site" / "index.html").read_text() == "<h1>hi</h1>" and out["replaced"] is False
+    f.write_file({"path": "JarvisProjects/site/index.html", "content": "!", "append": True}, ctx())
+    assert (tmp_path / "JarvisProjects" / "site" / "index.html").read_text() == "<h1>hi</h1>!"
+    for bad in ("project/.env", "keys/server.pem"):
+        with pytest.raises(PermissionError):
+            f.write_file({"path": bad, "content": "x"}, ctx())
+    with pytest.raises(PermissionError):
+        f.write_file({"path": ".ssh/config", "content": "x"}, ctx())
+
+
+def test_file_picker_only_takes_uploaded_files(tmp_path):
+    import asyncio
+
+    from jarvis_agent.stream.chrome import ChromeBrowser
+
+    calls = []
+
+    class FakeCdp:
+        async def call(self, method, params=None, session=None, timeout=15):
+            calls.append((method, params, session))
+            return {}
+
+    async def nothing(_):
+        return None
+
+    b = ChromeBrowser(tmp_path / "p", tmp_path, "", nothing, nothing)
+    b.cdp = FakeCdp()
+    b.uploads_dir.mkdir()
+    (b.uploads_dir / "a.pdf").write_text("x")
+    (b.uploads_dir / "b.pdf").write_text("y")
+    b.chooser = {"session": "s1", "node": 7, "mode": "selectSingle"}
+    asyncio.run(b.choose_files(["a.pdf", "b.pdf"]))
+    assert calls == [("DOM.setFileInputFiles", {"files": [str((b.uploads_dir / "a.pdf").resolve())], "backendNodeId": 7}, "s1")]
+    b.chooser = {"session": "s1", "node": 7, "mode": "selectMultiple"}
+    with pytest.raises(ValueError):
+        asyncio.run(b.choose_files(["../../etc/passwd"]))
+    with pytest.raises(RuntimeError):
+        asyncio.run(b.choose_files(["a.pdf"]))  # the chooser was used up
