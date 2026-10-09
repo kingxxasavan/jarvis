@@ -94,9 +94,9 @@ export function StatusPanel({ pulse, level, voice, activeProvider, toolCount }: 
 const QUICK = [
   { id: "youtube", label: "YouTube", icon: "youtube" },
   { id: "browser", label: "Browser", icon: "globe" },
+  { id: "spotify", label: "Spotify", icon: "music" },
   { id: "vscode", label: "VS Code", icon: "code" },
   { id: "terminal", label: "Terminal", icon: "terminal" },
-  { id: "files", label: "Files", icon: "folder" },
   { id: "tasks", label: "Tasks", icon: "tasks" },
 ];
 

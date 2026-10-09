@@ -61,10 +61,18 @@ class Config:
     workspace: Path
     codex_bin: str
     claude_bin: str
+    downloads_dir: Path
+    stream_enabled: bool
+    stream_port: int
+    chrome_bin: str
+    tunnel_token: str
+    stream_public_url: str
+    vscode_tunnel: str
 
     @staticmethod
     def load() -> "Config":
-        env = {**read_env(), **{k: v for k, v in os.environ.items() if k.startswith(("JARVIS_", "CODEX_", "CLAUDE_"))}}
+        prefixes = ("JARVIS_", "CODEX_", "CLAUDE_", "CHROME_", "CLOUDFLARE_", "STREAM_", "VSCODE_")
+        env = {**read_env(), **{k: v for k, v in os.environ.items() if k.startswith(prefixes)}}
         missing = [k for k in ("SUPABASE_URL", "SUPABASE_KEY", "DEVICE_TOKEN") if not env.get(k)]
         if missing:
             raise SystemExit("This computer is not paired yet. In JARVIS, open Settings > Devices > Add device, "
@@ -78,6 +86,13 @@ class Config:
             workspace=workspace,
             codex_bin=env.get("CODEX_BIN", ""),
             claude_bin=env.get("CLAUDE_BIN", ""),
+            downloads_dir=Path(env.get("JARVIS_DOWNLOADS") or Path.home() / "Downloads" / "JARVIS").expanduser().resolve(),
+            stream_enabled=env.get("JARVIS_STREAM", "on").lower() not in ("off", "0", "false", "no"),
+            stream_port=int(env.get("JARVIS_STREAM_PORT", "8788")),
+            chrome_bin=env.get("CHROME_BIN", ""),
+            tunnel_token=env.get("CLOUDFLARE_TUNNEL_TOKEN", ""),
+            stream_public_url=env.get("STREAM_PUBLIC_URL", ""),
+            vscode_tunnel=env.get("VSCODE_TUNNEL", ""),
         )
 
 

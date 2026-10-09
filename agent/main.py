@@ -108,10 +108,15 @@ def cmd_run(_: argparse.Namespace) -> None:
     except Exception as exc:  # noqa: BLE001
         log.warning("could not reach JARVIS yet (%s); will keep trying", exc)
         info = {"name": cfg.device_name}
+    runner.start_stream()
     tools = [t.name for t in runner.registry.all() if not t.hidden]
     log.info("JARVIS agent online as '%s' with %d abilities: %s", info.get("name"), len(tools), ", ".join(tools))
     if runner.registry.errors:
         log.warning("plugins that did not load: %s", runner.registry.errors)
+    if runner.stream:
+        from jarvis_agent.stream.server import status_line
+
+        log.info("Apps streaming: %s", status_line(runner.stream))
     log.info("Workspace: %s   (Ctrl+C to stop)", cfg.workspace)
     try:
         runner.loop()
@@ -148,6 +153,14 @@ def cmd_doctor(_: argparse.Namespace) -> None:
         print(f"  {name:<12} {path or 'not installed'}")
     for tool in ("git", "gh"):
         print(f"  {tool:<12} {shutil.which(tool) or 'not installed'}")
+    from jarvis_agent.stream.chrome import find_chrome
+    from jarvis_agent.stream.tunnel import find_cloudflared
+
+    print(f"  streaming    {'on' if cfg.stream_enabled else 'off (JARVIS_STREAM=off)'}")
+    print(f"  chrome       {find_chrome(cfg.chrome_bin) or 'not installed (needed for the Apps browser)'}")
+    print(f"  cloudflared  {find_cloudflared() or 'not installed: winget install --id Cloudflare.cloudflared'}")
+    print(f"  downloads    {cfg.downloads_dir}")
+    print(f"  vscode       {('vscode.dev/tunnel/' + cfg.vscode_tunnel) if cfg.vscode_tunnel else 'not set (VSCODE_TUNNEL)'}")
     print(f"  workspace    {cfg.workspace}")
     reg = build_registry(cfg)
     print(f"  abilities    {', '.join(t.name for t in reg.all())}")

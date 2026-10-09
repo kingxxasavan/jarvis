@@ -174,6 +174,7 @@ def test_runner_reports_success_and_failure():
     runner.pool = ThreadPoolExecutor(2)
     runner.running, runner.lock, runner.stop = set(), threading.Lock(), threading.Event()
     runner.manifest_dirty = threading.Event()
+    runner._stream_pending = None
     threading.Thread(target=runner.loop, daemon=True).start()
     assert runner.api.done.wait(5)
     runner.stop.set()
@@ -186,3 +187,38 @@ def test_results_are_json_safe():
     assert jsonable({"p": Path("a")}) == {"p": "a"}
     big = jsonable("x" * 400_000)
     assert big["truncated"] is True
+
+
+# App streaming -------------------------------------------------------------------
+
+from jarvis_agent.stream import auth as stream_auth  # noqa: E402
+from jarvis_agent.stream.chrome import to_url  # noqa: E402
+from jarvis_agent.tools.apps import clean_name, unique_path  # noqa: E402
+
+
+def test_stream_passes():
+    secret = stream_auth.new_secret()
+    good = stream_auth.sign(secret, "stream")
+    assert stream_auth.verify(secret, good, "stream")
+    assert not stream_auth.verify(secret, good, "files")
+    assert not stream_auth.verify("another-secret", good, "stream")
+    assert not stream_auth.verify(secret, stream_auth.sign(secret, "stream", ttl=-1), "stream")
+    payload, mac = good.split(".")
+    assert not stream_auth.verify(secret, payload + "x." + mac, "stream")
+    assert not stream_auth.verify(secret, None, "stream")
+
+
+def test_remote_addresses():
+    assert to_url("example.com") == "https://example.com"
+    assert to_url("https://open.spotify.com") == "https://open.spotify.com"
+    assert to_url("iron man suit").startswith("https://www.google.com/search?q=iron+man+suit")
+    for bad in ("file:///C:/Windows", "chrome://settings", "javascript:alert(1)", "ftp://x.org"):
+        with pytest.raises(ValueError):
+            to_url(bad)
+
+
+def test_download_names_are_safe(tmp_path):
+    assert clean_name("..\..\evil.exe") == "_.._evil.exe"
+    assert clean_name("a%2Fb.txt") == "a_b.txt"
+    (tmp_path / "f.zip").write_text("x")
+    assert unique_path(tmp_path, "f.zip").name == "f (1).zip"

@@ -97,6 +97,12 @@ create table if not exists public.devices (
   created_at timestamptz not null default now()
 );
 
+-- App streaming: where this device's stream server is reachable, and the
+-- per-start secret the website signs short-lived passes with.
+alter table public.devices add column if not exists stream_url text;
+alter table public.devices add column if not exists stream_secret text;
+alter table public.devices add column if not exists stream_info jsonb not null default '{}'::jsonb;
+
 create table if not exists public.jobs (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null default auth.uid() references auth.users on delete cascade,
@@ -303,16 +309,38 @@ begin
   return s;
 end $$;
 
+create or replace function public.agent_stream(p_token text, p_url text, p_secret text, p_info jsonb)
+returns void
+language plpgsql security definer
+set search_path = public, extensions
+as $$
+declare d public.devices;
+begin
+  d := public.device_from_token(p_token);
+  if p_url !~ '^https://[A-Za-z0-9.-]+(:[0-9]+)?$' then
+    raise exception 'stream url must be a bare https origin';
+  end if;
+  if length(coalesce(p_secret, '')) < 32 then
+    raise exception 'stream secret too short';
+  end if;
+  update public.devices
+     set stream_url = p_url, stream_secret = p_secret,
+         stream_info = coalesce(p_info, '{}'::jsonb), last_seen = now()
+   where id = d.id;
+end $$;
+
 revoke all on function public.device_from_token(text) from public, anon, authenticated;
 revoke all on function public.agent_hello(text, text, text, jsonb) from public;
 revoke all on function public.agent_claim(text, int) from public;
 revoke all on function public.agent_log(text, uuid, text, text) from public;
 revoke all on function public.agent_finish(text, uuid, boolean, jsonb, text) from public;
 revoke all on function public.agent_job_status(text, uuid) from public;
+revoke all on function public.agent_stream(text, text, text, jsonb) from public;
 grant execute on function public.agent_hello(text, text, text, jsonb) to anon;
 grant execute on function public.agent_claim(text, int) to anon;
 grant execute on function public.agent_log(text, uuid, text, text) to anon;
 grant execute on function public.agent_finish(text, uuid, boolean, jsonb, text) to anon;
 grant execute on function public.agent_job_status(text, uuid) to anon;
+grant execute on function public.agent_stream(text, text, text, jsonb) to anon;
 grant execute on function public.match_memories(text, extensions.vector, text, int) to authenticated;
 grant execute on function public.touch_memories(uuid[]) to authenticated;

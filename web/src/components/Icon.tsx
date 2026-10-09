@@ -28,6 +28,12 @@ const PATHS: Record<string, string> = {
   edit: "M4 20h4L19 9l-4-4L4 16zM14 6l4 4",
   trash: "M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13",
   external: "M14 4h6v6M20 4l-9 9M18 14v6H4V6h6",
+  back: "M15 6l-6 6 6 6",
+  forward: "M9 6l6 6-6 6",
+  reload: "M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5",
+  fullscreen: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5",
+  download: "M12 4v11M7 10l5 5 5-5M5 20h14",
+  music: "M9 18V6l10-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM19 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z",
   chat: "M4 5h16v11H9l-5 4z",
   spark: "M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6",
 };

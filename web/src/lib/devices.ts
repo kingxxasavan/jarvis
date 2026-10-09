@@ -22,6 +22,8 @@ export type Device = {
   manifest: ManifestTool[];
   last_seen: string | null;
   created_at: string;
+  stream_url?: string | null;
+  stream_info?: { vscode?: string } | null;
 };
 
 export type Job = {
@@ -30,16 +32,21 @@ export type Job = {
   created_at: string; started_at: string | null; finished_at: string | null; updated_at: string;
 };
 
-const DEVICE_COLUMNS = "id, name, platform, agent_version, manifest, last_seen, created_at";
+const DEVICE_COLUMNS = "id, name, platform, agent_version, manifest, last_seen, created_at, stream_url, stream_info";
 const ONLINE_MS = 45_000;
 
 export const isOnline = (d: Pick<Device, "last_seen">) =>
   !!d.last_seen && Date.now() - Date.parse(d.last_seen) < ONLINE_MS;
 
 export async function listDevices(sb: Supa): Promise<Device[]> {
-  const { data, error } = await sb.from("devices").select(DEVICE_COLUMNS).order("created_at");
-  if (error) throw new Error(error.message);
-  return ((data || []) as Device[]).map((d) => ({ ...d, manifest: Array.isArray(d.manifest) ? d.manifest : [] }));
+  const query = (cols: string) => sb.from("devices").select(cols).order("created_at");
+  let res = await query(DEVICE_COLUMNS);
+  if (res.error && /stream_/.test(res.error.message)) {
+    // The app-streaming migration has not been run yet; everything else still works.
+    res = await query(DEVICE_COLUMNS.replace(", stream_url, stream_info", ""));
+  }
+  if (res.error) throw new Error(res.error.message);
+  return ((res.data || []) as unknown as Device[]).map((d) => ({ ...d, manifest: Array.isArray(d.manifest) ? d.manifest : [] }));
 }
 
 // Creates a device and returns its one-time pairing code. The code carries the

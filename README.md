@@ -26,6 +26,7 @@ The website works on its own. When a device agent is online, Jarvis can also use
 | arkia.buzz | Calendar, tasks and reminders (read, add, tick off), friends' messages. Unread messages and due reminders pop up and are spoken while Jarvis is open. |
 | Projects | "Build me a ... on my laptop": Codex or Claude Code runs on the device, the log streams into Tasks, the result is committed to git, optionally pushed to a private GitHub repo. Needs your approval. |
 | New abilities | "Build yourself a tool that ...": Codex/Claude Code writes a plugin, it is import-checked, you read the code on the Tasks page and press Enable. Then every Jarvis surface can use it, with no redeploy. |
+| Apps (streamed) | The laptop's real Chrome, with its own logins, streamed into the **Apps** tab with sound: browse, use the Spotify web player, sites the school network blocks. Downloads land on the laptop and can be saved to whatever device you are on. VS Code opens through Microsoft's own VS Code tunnel. Runs through a Cloudflare Tunnel; each connection needs a short-lived pass from your signed-in JARVIS. |
 | Device control | Open apps, open pages, media/volume keys, system status, project files. Each action reports what it actually observed. |
 | Web | Live search and page reading through Ollama's web search API (same Ollama key). |
 
@@ -103,6 +104,18 @@ python main.py autostart on
 ```bash
 python main.py
 ```
+
+**Apps streaming** needs Chrome and Cloudflare's tunnel program on the laptop:
+
+```bash
+winget install --id Cloudflare.cloudflared
+```
+
+That gives a free tunnel whose address changes on each restart; the agent reports every new one to JARVIS
+automatically. For a fixed address on your own domain, create a tunnel in the Cloudflare dashboard pointing at
+`http://localhost:8788` and put `CLOUDFLARE_TUNNEL_TOKEN=` and `STREAM_PUBLIC_URL=https://apps.yourdomain` in
+`agent/.env`. For VS Code, run `code tunnel service install` once on the laptop and set `VSCODE_TUNNEL=<the
+machine name it shows>` in `agent/.env`. Set `JARVIS_STREAM=off` to disable streaming on a device.
 
 `python main.py doctor` checks the connection and which coding tools it found. Projects are created in
 `~/JarvisProjects` (set `JARVIS_WORKSPACE` in `agent/.env` to change it). Logs are in `agent/data/agent.log`.

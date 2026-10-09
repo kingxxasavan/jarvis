@@ -12,12 +12,13 @@ import { Player } from "./Player";
 import { Toasts, type Toast } from "./Toasts";
 import { TopBar, type View } from "./TopBar";
 import { Transcript } from "./Transcript";
+import { AppsView } from "./views/AppsView";
 import { MemoryView } from "./views/MemoryView";
 import { SettingsView } from "./views/SettingsView";
 import { TasksView } from "./views/TasksView";
 
 const SPEAK_KEY = "jarvis.speak";
-const QUICK_APPS: Record<string, string> = { browser: "browser", vscode: "vscode", terminal: "terminal", files: "files" };
+const QUICK_APPS: Record<string, string> = { vscode: "vscode", terminal: "terminal", files: "files" };
 const TOOL_ICON: Record<string, string> = {
   play_youtube: "youtube", youtube_search: "youtube", youtube_history: "youtube", web_search: "globe", read_webpage: "globe",
   remember: "memory", recall_memories: "memory", forget_memory: "memory",
@@ -34,6 +35,7 @@ export function Hud({ initial }: { initial: string }) {
   const [voiceReplies, setVoiceReplies] = useState(true);
   const [provider, setProvider] = useState("");
   const [jobStatus, setJobStatus] = useState<Record<string, string>>({});
+  const [appCommand, setAppCommand] = useState<{ url: string; n: number } | null>(null);
   const viaVoice = useRef(false);
   const interacted = useRef(false);
 
@@ -77,6 +79,7 @@ export function Hud({ initial }: { initial: string }) {
       log("tasks", j.title, "run");
     },
     onTool: (c: ToolChip) => {
+      if (c.name === "pc_browser_open" && c.state === "done") setView("apps");
       if (c.state !== "start") log(TOOL_ICON[c.name] || (c.name.startsWith("pc_") ? "device" : "spark"), c.label, c.state === "done" ? "ok" : "err");
     },
     onProvider: setProvider,
@@ -128,6 +131,11 @@ export function Hud({ initial }: { initial: string }) {
   const quick = async (id: string) => {
     if (id === "youtube") return setPlayerOpen(true);
     if (id === "tasks") return setView("tasks");
+    if (id === "browser") return setView("apps");
+    if (id === "spotify") {
+      setAppCommand({ url: "https://open.spotify.com", n: Date.now() });
+      return setView("apps");
+    }
     try {
       const res = await api<{ device: string; result: unknown }>("/api/devices/run", { method: "POST", json: { tool: "open_app", args: { name: QUICK_APPS[id] } } });
       const result = (res.result || {}) as { opened?: string };
@@ -224,6 +232,13 @@ export function Hud({ initial }: { initial: string }) {
           </section>
           <ActivityPanel activity={activity} onQuick={quick} />
         </main>
+      ) : view === "apps" ? (
+        <AppsView
+          command={appCommand}
+          onCommand={(url) => setAppCommand({ url, n: Date.now() })}
+          onYouTube={() => setPlayerOpen(true)}
+          notify={notify}
+        />
       ) : view === "tasks" ? (
         <TasksView focusId={focusJob} onFocus={setFocusJob} onChanged={refresh} notify={notify} />
       ) : view === "memory" ? (

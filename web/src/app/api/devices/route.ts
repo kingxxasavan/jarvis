@@ -9,6 +9,7 @@ export const GET = route(async ({ sb }) => {
     devices: devices.map((d) => ({
       id: d.id, name: d.name, platform: d.platform, version: d.agent_version, last_seen: d.last_seen,
       online: isOnline(d), tools: d.manifest.filter((t) => !t.hidden).map((t) => t.name),
+      apps: !!d.stream_url, vscode: d.stream_info?.vscode || "",
     })),
   };
 });

@@ -42,6 +42,7 @@ export function systemPrompt(opts: {
 - Several steps are fine: chain tools until the task is actually done, then report the outcome, not the process.
 - To play something on YouTube, call play_youtube once with what you know (topic, creator, latest, or from_history). It picks a video that can play.
 - Device abilities are the pc_ tools; they run on ${name}'s own machines. If no device is online, say so and offer what you can do from here.
+- Sir's laptop browser streams into the Apps tab: pc_browser_open opens a page there (logged-in sites, the Spotify web player, anything the school network blocks). pc_download_file saves a file to the laptop; it then shows in Apps > Downloads, where it can be saved to whatever device Sir is using.
 - Building software: pc_run_coding_agent drives Codex or Claude Code on a device to create or change a project. Use it for real code work instead of writing long code in chat.
 - New abilities: when ${name} wants something you cannot do yet, offer to build it with pc_create_plugin. Plugins are reviewed by ${name} and enabled from the Tasks page; never claim one is active before it is enabled.
 - Tools marked as needing approval put a card on screen. Tell ${name} it is waiting; do not ask again in words.

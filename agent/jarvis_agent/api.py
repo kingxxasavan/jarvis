@@ -53,6 +53,9 @@ class DeviceApi:
     def finish(self, job_id: str, ok: bool, result: Any = None, error: str | None = None) -> None:
         self._call("agent_finish", {"p_job_id": job_id, "p_ok": ok, "p_result": result, "p_error": error})
 
+    def stream(self, url: str, secret: str, info: dict[str, Any]) -> None:
+        self._call("agent_stream", {"p_url": url, "p_secret": secret, "p_info": info})
+
     def status(self, job_id: str) -> str | None:
         return self._call("agent_job_status", {"p_job_id": job_id})
 

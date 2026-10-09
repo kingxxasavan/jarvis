@@ -17,6 +17,8 @@ from typing import Any
 from .api import ApiError, DeviceApi
 from .config import Config
 from .registry import Registry, ToolContext
+from .config import DATA_DIR
+from .tools import apps as app_tools
 from .tools import plugins as plugin_tools
 from .tools import projects, system
 
@@ -34,15 +36,16 @@ def platform_label() -> str:
     return f"{platform.system()} {platform.release()}"
 
 
-def build_registry(cfg: Config) -> Registry:
+def build_registry(cfg: Config, stream_getter=lambda: None) -> Registry:
     ws = projects.Workspace(cfg.workspace, cfg.codex_bin, cfg.claude_bin)
+    apps = app_tools.AppTools(cfg.downloads_dir, stream_getter)
     registry = Registry(builtins=[])
     plug = plugin_tools.Plugins(
         cfg.codex_bin, cfg.claude_bin,
         builtin_names=lambda: {t.name for t in registry.builtins},
         reload=lambda: registry.reload_plugins(),
     )
-    registry.builtins = [*system.TOOLS, *ws.tools(), *plug.tools()]
+    registry.builtins = [*system.TOOLS, *ws.tools(), *apps.tools(), *plug.tools()]
     registry.reload_plugins()
     return registry
 
@@ -62,7 +65,14 @@ class Runner:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.api = DeviceApi(cfg.supabase_url, cfg.supabase_key, cfg.device_token)
-        self.registry = build_registry(cfg)
+        self._stream_pending: tuple[str, str] | None = None
+        self.stream = None
+        if cfg.stream_enabled:
+            from .stream.server import StreamService
+
+            self.stream = StreamService(DATA_DIR, cfg.downloads_dir, cfg.chrome_bin, cfg.stream_port,
+                                        self._publish_stream, cfg.tunnel_token, cfg.stream_public_url)
+        self.registry = build_registry(cfg, lambda: self.stream)
         self.pool = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="job")
         self.running: set[str] = set()
         self.lock = threading.Lock()
@@ -76,6 +86,23 @@ class Runner:
             self.manifest_dirty.set()
 
         self.registry.reload_plugins = reload_and_flag  # type: ignore[method-assign]
+
+    def _publish_stream(self, url: str, secret: str) -> None:
+        # Called from the tunnel thread; the main loop does the network call (and retries).
+        self._stream_pending = (url, secret)
+
+    def _flush_stream(self) -> None:
+        pending = self._stream_pending
+        if not pending:
+            return
+        info = {"vscode": self.cfg.vscode_tunnel, "downloads": str(self.cfg.downloads_dir)}
+        self.api.stream(pending[0], pending[1], info)
+        if self._stream_pending == pending:
+            self._stream_pending = None
+
+    def start_stream(self) -> None:
+        if self.stream:
+            self.stream.start()
 
     def announce(self) -> dict[str, Any]:
         info = self.api.hello(platform_label(), self.registry.manifest())
@@ -137,6 +164,7 @@ class Runner:
             try:
                 if self.manifest_dirty.is_set():
                     self.announce()
+                self._flush_stream()
                 with self.lock:
                     free = WORKERS - len(self.running)
                 jobs = self.api.claim(max(0, free))  # claim(0) is a pure heartbeat
@@ -157,5 +185,7 @@ class Runner:
 
     def shutdown(self) -> None:
         self.stop.set()
+        if self.stream:
+            self.stream.stop()
         self.pool.shutdown(wait=False, cancel_futures=True)
         self.api.close()
