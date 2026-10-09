@@ -6,7 +6,6 @@ import { browserClient } from "@/lib/supabase/browser";
 type Step = "password" | "mfa";
 
 export default function Login() {
-  const sb = browserClient();
   const [step, setStep] = useState<Step>("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -18,13 +17,13 @@ export default function Login() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("denied")) setError("That account does not have access to this JARVIS.");
     if (params.get("mfa")) setStep("mfa");
-    sb.auth.mfa.getAuthenticatorAssuranceLevel().then(({ data }) => {
+    browserClient().auth.mfa.getAuthenticatorAssuranceLevel().then(({ data }) => {
       if (data?.nextLevel === "aal2" && data.currentLevel !== "aal2") setStep("mfa");
     });
-  }, [sb]);
+  }, []);
 
   const finish = async () => {
-    const { data } = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
+    const { data } = await browserClient().auth.mfa.getAuthenticatorAssuranceLevel();
     if (data?.nextLevel === "aal2" && data.currentLevel !== "aal2") {
       setStep("mfa");
       return;
@@ -36,7 +35,7 @@ export default function Login() {
     e.preventDefault();
     setBusy(true);
     setError("");
-    const { error } = await sb.auth.signInWithPassword({ email: email.trim(), password });
+    const { error } = await browserClient().auth.signInWithPassword({ email: email.trim(), password });
     setBusy(false);
     if (error) {
       setError(error.message === "Invalid login credentials" ? "Wrong email or password." : error.message);
@@ -50,14 +49,14 @@ export default function Login() {
     e.preventDefault();
     setBusy(true);
     setError("");
-    const { data: factors } = await sb.auth.mfa.listFactors();
+    const { data: factors } = await browserClient().auth.mfa.listFactors();
     const totp = factors?.totp?.find((f) => f.status === "verified");
     if (!totp) {
       setBusy(false);
       setError("No authenticator is set up for this account.");
       return;
     }
-    const { error } = await sb.auth.mfa.challengeAndVerify({ factorId: totp.id, code: code.trim() });
+    const { error } = await browserClient().auth.mfa.challengeAndVerify({ factorId: totp.id, code: code.trim() });
     setBusy(false);
     if (error) {
       setError("That code did not match. Codes change every 30 seconds.");
@@ -85,7 +84,7 @@ export default function Login() {
             <input inputMode="numeric" autoComplete="one-time-code" placeholder="123456" value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} autoFocus aria-label="Code" />
             <button className="btn primary wide" disabled={busy || code.length !== 6}>{busy ? "Checking..." : "Continue"}</button>
-            <button type="button" className="btn ghost wide" onClick={async () => { await sb.auth.signOut(); setStep("password"); }}>
+            <button type="button" className="btn ghost wide" onClick={async () => { await browserClient().auth.signOut(); setStep("password"); }}>
               Use a different account
             </button>
           </form>
