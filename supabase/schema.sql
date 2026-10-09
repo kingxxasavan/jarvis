@@ -142,6 +142,16 @@ begin
   end loop;
 end $$;
 
+-- Table privileges. Newer Supabase projects do not grant these automatically.
+-- Only the signed-in owner gets them (row-level security still applies);
+-- anon gets none, and the device agent works only through the agent_* functions.
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on public.conversations, public.messages, public.memories,
+  public.watch_history, public.integrations, public.devices, public.jobs to authenticated;
+grant select on public.job_events to authenticated;
+grant usage, select on all sequences in schema public to authenticated;
+revoke all on all tables in schema public from anon;
+
 -- Memory search: vector similarity blended with full-text rank, importance and
 -- recent use. Runs as the caller, so row-level security still applies.
 
