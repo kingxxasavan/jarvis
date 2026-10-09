@@ -222,3 +222,53 @@ def test_download_names_are_safe(tmp_path):
     assert clean_name("a%2Fb.txt") == "a_b.txt"
     (tmp_path / "f.zip").write_text("x")
     assert unique_path(tmp_path, "f.zip").name == "f (1).zip"
+
+
+# Folders and stream delivery -----------------------------------------------------
+
+from jarvis_agent.tools import files as folder_tools  # noqa: E402
+
+
+def test_folders(tmp_path, monkeypatch):
+    import re
+
+    # pytest's temp folder is itself inside AppData, which the real rules refuse.
+    monkeypatch.setattr(folder_tools, "DENY", re.compile(r"[\/]\.ssh([\/]|$)"))
+    monkeypatch.setattr(folder_tools, "known_folder", lambda name: tmp_path / "Desk" if name.lower() == "desktop" else None)
+    out = folder_tools.create_folder({"path": "Desktop/School/APUSH"}, ctx())
+    assert out["created"] and (tmp_path / "Desk" / "School" / "APUSH").is_dir()
+    assert folder_tools.create_folder({"path": "Desktop/School/APUSH"}, ctx())["created"] is False
+    assert "[folder] School" in folder_tools.list_folder({"path": "Desktop"}, ctx())["items"]
+
+
+def test_private_and_system_folders_are_refused():
+    import os
+
+    bad = ["AppData/Roaming/x", "~/.ssh/keys", "Documents/../AppData/Local/x"]
+    if os.environ.get("SystemRoot"):
+        bad.append(os.path.join(os.environ["SystemRoot"], "Temp", "jarvis"))
+    for path in bad:
+        with pytest.raises(PermissionError):
+            folder_tools.resolve(path)
+    with pytest.raises(ValueError):
+        folder_tools.resolve("")
+    assert folder_tools.resolve("Desktop/Windows stuff").name == "Windows stuff"  # a user folder named like a system one is fine
+
+
+def test_viewer_queue_keeps_sound_short_and_frames_newest():
+    import asyncio
+
+    from jarvis_agent.stream.server import AUDIO, FRAME, Client
+
+    async def run():
+        c = Client(ws=None)  # type: ignore[arg-type]
+        for i in range(40):
+            c.push(AUDIO + bytes([i]))
+        c.push('{"type":"tabs"}')
+        c.offer(FRAME + b"old")
+        c.offer(FRAME + b"new")
+        audio = [d for d in c.queue if isinstance(d, bytes)]
+        assert len(audio) == Client.MAX_QUEUED_AUDIO and audio[0][1] == 15  # oldest dropped
+        assert c.frame == FRAME + b"new"
+
+    asyncio.run(run())

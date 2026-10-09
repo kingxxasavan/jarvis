@@ -129,7 +129,9 @@ class ChromeBrowser:
         self.active: str | None = None
         self.viewport = (1280, 800)
         self.streaming = False
-        self.quality = 60
+        self.quality = 55
+        self.scale = 0.85
+        self._last_ack = 0.0
         self.downloads: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
@@ -250,11 +252,18 @@ class ChromeBrowser:
                                                     "bytes": params.get("totalBytes", 0)}))
 
     async def _frame(self, params: dict, session: str) -> None:
+        """Hands the frame to the viewers (who keep only the newest) and asks Chrome
+        for the next one straight away, at most ~25 times a second."""
         import base64
+        import time
 
         try:
             await self.send_frame(base64.b64decode(params["data"]))
         finally:
+            wait = self._last_ack + 0.04 - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_ack = time.monotonic()
             if self.cdp:
                 try:
                     await self.cdp.call("Page.screencastFrameAck", {"sessionId": params["sessionId"]}, session, timeout=5)
@@ -312,12 +321,15 @@ class ChromeBrowser:
         except CdpError:
             pass
         w, h = self.viewport
-        await self.cdp.call("Page.startScreencast", {"format": "jpeg", "quality": self.quality, "maxWidth": w, "maxHeight": h}, sid)
+        await self.cdp.call("Page.startScreencast", {"format": "jpeg", "quality": self.quality,
+                                                     "maxWidth": int(w * self.scale), "maxHeight": int(h * self.scale)}, sid)
 
-    async def set_view(self, width: int, height: int, quality: int | None = None) -> None:
-        self.viewport = (max(320, min(int(width), 2560)), max(240, min(int(height), 1600)))
+    async def set_view(self, width: int, height: int, quality: int | None = None, scale: float | None = None) -> None:
+        self.viewport = (max(320, min(int(width), 1920)), max(240, min(int(height), 1200)))
         if quality:
             self.quality = max(20, min(int(quality), 90))
+        if scale:
+            self.scale = max(0.4, min(float(scale), 1.0))
         await self.ensure()
         if self.active:
             sid = await self._session(self.active)

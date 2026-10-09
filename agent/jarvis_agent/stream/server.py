@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import threading
+from collections import deque
 from pathlib import Path
 from typing import Any, Callable
 
@@ -34,9 +35,51 @@ CORS = {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"}
 
 
 class Client:
+    """One viewer. Frames go through a one-slot mailbox: if the network is slower
+    than the screen changes, older frames are replaced instead of queued, so the
+    picture is always current rather than seconds behind."""
+
+    MAX_QUEUED_AUDIO = 25  # 0.5 s; older sound is dropped rather than played late
+
     def __init__(self, ws: web.WebSocketResponse):
         self.ws = ws
         self.audio = False
+        self.frame: bytes | None = None
+        self.queue: deque[bytes | str] = deque()  # messages and sound, in order
+        self.wake = asyncio.Event()
+        self.sender: asyncio.Task | None = None
+
+    def offer(self, packet: bytes) -> None:
+        self.frame = packet
+        self.wake.set()
+
+    def push(self, data: bytes | str) -> None:
+        if isinstance(data, bytes) and data[:1] == AUDIO:
+            audio = sum(1 for d in self.queue if isinstance(d, bytes))
+            if audio >= self.MAX_QUEUED_AUDIO:
+                for i, d in enumerate(self.queue):
+                    if isinstance(d, bytes):
+                        del self.queue[i]
+                        break
+        self.queue.append(data)
+        self.wake.set()
+
+    async def pump(self) -> None:
+        """The only place that writes to this viewer's socket."""
+        while not self.ws.closed:
+            await self.wake.wait()
+            self.wake.clear()
+            while self.queue:
+                item = self.queue.popleft()
+                if isinstance(item, bytes):
+                    await asyncio.wait_for(self.ws.send_bytes(item), 15)
+                else:
+                    await asyncio.wait_for(self.ws.send_str(item), 15)
+            packet, self.frame = self.frame, None
+            if packet is not None:
+                await asyncio.wait_for(self.ws.send_bytes(packet), 15)
+                if self.queue or self.frame:
+                    self.wake.set()
 
 
 class StreamService:
@@ -103,17 +146,12 @@ class StreamService:
     # Fan-out ---------------------------------------------------------------------
 
     async def _send(self, client: Client, data: bytes | str) -> None:
-        try:
-            if isinstance(data, bytes):
-                await asyncio.wait_for(client.ws.send_bytes(data), 10)
-            else:
-                await asyncio.wait_for(client.ws.send_str(data), 10)
-        except Exception:  # noqa: BLE001 - a dead or stuck viewer is dropped
-            self.clients.discard(client)
-            await client.ws.close()
+        client.push(data)
 
     async def _send_frame(self, jpeg: bytes) -> None:
-        await asyncio.gather(*(self._send(c, FRAME + jpeg) for c in list(self.clients)))
+        packet = FRAME + jpeg
+        for c in list(self.clients):
+            c.offer(packet)
 
     async def _send_json(self, msg: dict) -> None:
         text = json.dumps(msg)
@@ -126,7 +164,7 @@ class StreamService:
     def _fan_audio(self, packet: bytes) -> None:
         for c in list(self.clients):
             if c.audio and not c.ws.closed:
-                asyncio.create_task(self._send(c, packet))
+                c.push(packet)
 
     def _update_audio(self) -> None:
         if any(c.audio for c in self.clients):
@@ -145,29 +183,70 @@ class StreamService:
     async def _ws(self, request: web.Request) -> web.StreamResponse:
         if not self._authorized(request, "stream"):
             return web.json_response({"error": "This link has expired. Reopen Apps in JARVIS."}, status=403, headers=CORS)
-        ws = web.WebSocketResponse(heartbeat=25, max_msg_size=1024**2)
+        ws = web.WebSocketResponse(heartbeat=25, max_msg_size=1024**2, compress=False)
         await ws.prepare(request)
         client = Client(ws)
+        client.sender = asyncio.create_task(self._pump(client))
         self.clients.add(client)
         log.info("viewer connected (%d watching)", len(self.clients))
+        inbox: deque[dict] = deque()
+        wake = asyncio.Event()
+        worker = asyncio.create_task(self._work(client, inbox, wake))
         try:
             await self.browser.start_stream()
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
                     continue
                 try:
-                    await self._handle(client, json.loads(msg.data))
-                except Exception as exc:  # noqa: BLE001 - report to the page, keep the session
-                    await self._send(client, json.dumps({"type": "error", "message": str(exc) or exc.__class__.__name__}))
+                    inbox.append(json.loads(msg.data))
+                except ValueError:
+                    continue
+                wake.set()
         except Exception as exc:  # noqa: BLE001
             await self._send(client, json.dumps({"type": "error", "message": str(exc)}))
         finally:
+            worker.cancel()
+            if client.sender:
+                client.sender.cancel()
             self.clients.discard(client)
             self._update_audio()
             if not self.clients:
                 await self.browser.stop_stream()
             log.info("viewer left (%d watching)", len(self.clients))
         return ws
+
+    async def _pump(self, client: Client) -> None:
+        try:
+            await client.pump()
+        except Exception:  # noqa: BLE001 - a stuck or closed viewer is dropped
+            self.clients.discard(client)
+            await client.ws.close()
+
+    async def _work(self, client: Client, inbox: deque, wake: asyncio.Event) -> None:
+        """Runs the viewer's input in order. Consecutive pointer moves collapse into
+        the latest one and consecutive scrolls add up, so a click never waits behind
+        a backlog of movement over a slow connection."""
+        while True:
+            await wake.wait()
+            wake.clear()
+            while inbox:
+                m = inbox.popleft()
+                if m.get("type") == "mouse":
+                    kind = m.get("kind")
+                    while inbox and inbox[0].get("type") == "mouse" and inbox[0].get("kind") == kind and kind in ("move", "wheel"):
+                        nxt = inbox.popleft()
+                        if kind == "wheel":
+                            nxt["dx"] = float(nxt.get("dx", 0)) + float(m.get("dx", 0))
+                            nxt["dy"] = float(nxt.get("dy", 0)) + float(m.get("dy", 0))
+                        m = nxt
+                try:
+                    await self._handle(client, m)
+                except Exception as exc:  # noqa: BLE001
+                    if m.get("type") in ("mouse", "key", "view", "text", "copy", "audio"):
+                        # Input landing mid-navigation can fail harmlessly; do not nag the viewer.
+                        log.debug("input %s ignored: %s", m.get("type"), exc)
+                    else:
+                        await self._send(client, json.dumps({"type": "error", "message": str(exc) or exc.__class__.__name__}))
 
     async def _handle(self, client: Client, m: dict) -> None:
         kind = m.get("type")
@@ -177,7 +256,7 @@ class StreamService:
         elif kind == "key":
             await b.key(m)
         elif kind == "view":
-            await b.set_view(m.get("width", 1280), m.get("height", 800), m.get("quality"))
+            await b.set_view(m.get("width", 1280), m.get("height", 800), m.get("quality"), m.get("scale"))
         elif kind == "text":
             await b.insert_text(str(m.get("text", "")))
         elif kind == "copy":

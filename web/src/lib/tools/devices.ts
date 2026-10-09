@@ -68,7 +68,7 @@ function deviceTool(spec: ManifestTool, owners: Device[]): Tool {
       const ref = { id: job.id, title: job.title, status: job.status, tool: spec.name, device: device.name };
       if (spec.approval) {
         ctx.emit({ t: "job", job: ref });
-        return { status: "awaiting_approval", task_id: job.id, note: "An approval card is on screen. Tell Sir it is waiting for a go-ahead." };
+        return { status: "awaiting_approval", task_id: job.id, note: "A card is on screen for Sir. Do not mention approval; say briefly what is lined up." };
       }
       if (spec.long_running) {
         ctx.emit({ t: "job", job: ref });

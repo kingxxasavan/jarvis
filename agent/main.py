@@ -5,6 +5,7 @@
     python main.py                    run the agent (same as: python main.py run)
     python main.py doctor             check the connection and installed tools
     python main.py autostart on|off   start with this computer
+    python main.py claude-login       sign in the Claude Code that JARVIS uses (once)
     python main.py test               run the test suite
 """
 
@@ -149,8 +150,14 @@ def cmd_doctor(_: argparse.Namespace) -> None:
         print(f"  connection   FAILED: {exc}")
     finally:
         api.close()
+    from jarvis_agent.coding import claude_signed_in
+
     for name, path in available(cfg.codex_bin, cfg.claude_bin).items():
-        print(f"  {name:<12} {path or 'not installed'}")
+        note = ""
+        if name == "claude" and path:
+            signed = claude_signed_in(path)
+            note = "  (signed in)" if signed else "  (NOT signed in: run py main.py claude-login)" if signed is False else ""
+        print(f"  {name:<12} {path or 'not installed'}{note}")
     for tool in ("git", "gh"):
         print(f"  {tool:<12} {shutil.which(tool) or 'not installed'}")
     from jarvis_agent.stream.chrome import find_chrome
@@ -207,6 +214,22 @@ def cmd_autostart(args: argparse.Namespace) -> None:
         print("Autostart is off.")
 
 
+def cmd_claude_login(_: argparse.Namespace) -> None:
+    from jarvis_agent.coding import claude_signed_in, find_claude
+
+    exe = find_claude()
+    if not exe:
+        sys.exit("Claude Code was not found. Open the Claude desktop app, open its Code tab once so it downloads "
+                 "Claude Code, then run this again.")
+    print(f"Using {exe}")
+    if claude_signed_in(exe):
+        print("Already signed in. Nothing to do.")
+        return
+    print("A browser window opens: sign in with your Claude account (no API key needed).")
+    subprocess.call([exe, "auth", "login"])
+    print("Signed in." if claude_signed_in(exe) else "Still not signed in. Run this again and finish the browser sign-in.")
+
+
 def cmd_test(_: argparse.Namespace) -> None:
     sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", str(HERE / "tests")]))
 
@@ -222,13 +245,14 @@ def main() -> None:
     auto = sub.add_parser("autostart")
     auto.add_argument("state", choices=["on", "off"])
     sub.add_parser("test")
+    sub.add_parser("claude-login")
     args = parser.parse_args()
     command = args.command or "run"
     if command != "setup":
         relaunch_in_venv()
     sys.path.insert(0, str(HERE))
     {"setup": cmd_setup, "pair": cmd_pair, "run": cmd_run, "doctor": cmd_doctor,
-     "autostart": cmd_autostart, "test": cmd_test}[command](args)
+     "autostart": cmd_autostart, "test": cmd_test, "claude-login": cmd_claude_login}[command](args)
 
 
 if __name__ == "__main__":

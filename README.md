@@ -85,6 +85,8 @@ winget install -e --id GitHub.cli --accept-package-agreements
 winget install -e --id OpenJS.NodeJS.LTS --accept-package-agreements
 ```
 
+If a line says a program is already installed, that is fine; it is skipped.
+
 **Close Terminal and open a new one** so it finds the new programs.
 
 ### Step 2: sign in to GitHub
@@ -115,28 +117,22 @@ py main.py pair PASTE-YOUR-CODE-HERE
 
 ### Step 5: Claude Code from the Claude desktop app (so JARVIS can build projects)
 
-No API key needed: it runs on your Claude account. Install the Claude desktop app:
+No API key needed: it runs on your Claude account. Already have the Claude app? Skip the install line.
 
 ```powershell
 winget install -e --id Anthropic.Claude --accept-package-agreements
 ```
 
-Open **Claude** from the Start menu, sign in, and open its **Code** tab once (that downloads the Claude Code
-engine JARVIS uses). Then sign that engine in once; a browser window opens for your Claude account:
+Open **Claude**, sign in, and open its **Code** tab once (that downloads the Claude Code engine JARVIS uses).
+Then sign that engine in once. The desktop app's own sign-in does not carry over, so this is needed:
 
 ```powershell
-$claude = (Get-ChildItem "$env:APPDATA\Claude\claude-code\*\*\claude.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
-& $claude auth login
+cd ~\jarvis\agent
+py main.py claude-login
 ```
 
-Check it worked (`"loggedIn": true`):
-
-```powershell
-& $claude auth status
-```
-
-The desktop app's own sign-in does not carry over to this, so the step above is needed once. It stays signed in
-when the app updates. JARVIS finds the newest copy by itself.
+A browser window opens for your Claude account. It finds Claude Code wherever the app installed it, stays signed
+in when the app updates, and says "Already signed in" if there is nothing to do.
 
 Optional, Codex (uses your ChatGPT account, also no API key):
 
@@ -229,8 +225,8 @@ Start-Process .venv\Scripts\pythonw.exe -ArgumentList "main.py","run" -WorkingDi
 | `connection FAILED: ... removed or its token is wrong` | Add the device again in Settings and redo Step 4. |
 | `cloudflared` or `chrome` not installed | Redo its line from Step 1, then open a new Terminal. |
 | `running scripts is disabled` | Use `codex.cmd` exactly as written above. |
-| No `claude-code` folder found in Step 5 | Open the Claude app's Code tab once, wait for it to load, then rerun Step 5. |
-| A build fails with a sign-in error | Rerun the two lines of Step 5 (`auth login`). |
+| claude-login says Claude Code was not found | Open the Claude app's Code tab once, wait for it to load, then rerun it. |
+| A build fails with a sign-in error, or doctor says claude NOT signed in | Run `py main.py claude-login`. |
 | Apps tab says no device is streaming | Check the agent window shows `apps are reachable at https://...`. |
 | Nothing works after a Windows Update restart | The agent starts when you sign in to Windows. Sign in once. |
 

@@ -20,7 +20,7 @@ from .registry import Registry, ToolContext
 from .config import DATA_DIR
 from .tools import apps as app_tools
 from .tools import plugins as plugin_tools
-from .tools import projects, system
+from .tools import files, projects, system
 
 log = logging.getLogger("jarvis.runner")
 
@@ -45,7 +45,7 @@ def build_registry(cfg: Config, stream_getter=lambda: None) -> Registry:
         builtin_names=lambda: {t.name for t in registry.builtins},
         reload=lambda: registry.reload_plugins(),
     )
-    registry.builtins = [*system.TOOLS, *ws.tools(), *apps.tools(), *plug.tools()]
+    registry.builtins = [*system.TOOLS, *files.TOOLS, *ws.tools(), *apps.tools(), *plug.tools()]
     registry.reload_plugins()
     return registry
 

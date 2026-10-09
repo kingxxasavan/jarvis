@@ -23,7 +23,14 @@ export const RATE_KEY = "jarvis.rate";
 
 export function cleanForSpeech(text: string): string {
   return text
-    .replace(/```[\s\S]*?```/g, " (code is on screen) ")
+    .replace(/```[\s\S]*?```/g, " (code is on screen). ")
+    .replace(/[:,;.]?[ \t]*\n\s*(?:[-*•]|\d+[.)])\s+/g, ". ") // each list item becomes its own sentence
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, "")
+    .split(/(?<=[.!?])\s+/)
+    .filter((sentence) => !/approv/i.test(sentence)) // approval cards are read on screen, not aloud
+    .join(" ")
+    .replace(/\s*[–—]\s*|\s+-\s+/g, ", ") // dashes between words become a comma
+    .replace(/\.{2,}|…/g, ".")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/https?:\/\/\S+/g, "the link on screen")

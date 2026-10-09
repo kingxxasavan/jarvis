@@ -9,7 +9,12 @@ export type StreamConn = { ws: string; base: string; files: string; vscode: stri
 type Tab = { id: string; title: string; url: string; active: boolean };
 type Status = "connecting" | "live" | "closed";
 
-const QUALITY: Record<string, number> = { low: 40, normal: 60, sharp: 80 };
+// JPEG quality and the share of full resolution sent. Lower = less data, less lag.
+const QUALITY: Record<string, { quality: number; scale: number }> = {
+  low: { quality: 40, scale: 0.6 },
+  normal: { quality: 55, scale: 0.85 },
+  sharp: { quality: 75, scale: 1 },
+};
 
 function mods(e: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) {
   return (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
@@ -74,7 +79,8 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
   const playAudio = useCallback((buf: ArrayBuffer) => {
     const a = audio.current;
     if (!a) return;
-    const pcm = new Int16Array(buf, 1, (buf.byteLength - 1) >> 1);
+    // Copy past the 1-byte header: an Int16Array cannot start at an odd byte offset.
+    const pcm = new Int16Array(buf.slice(1, 1 + ((buf.byteLength - 1) & ~1)));
     const ab = a.ctx.createBuffer(1, pcm.length, 24000);
     const ch = ab.getChannelData(0);
     for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
@@ -103,7 +109,7 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
     socket.onopen = () => {
       retries.current = 0;
       setStatus("live");
-      socket.send(JSON.stringify({ type: "view", width: view.current.w, height: view.current.h, quality: QUALITY[quality] }));
+      socket.send(JSON.stringify({ type: "view", width: view.current.w, height: view.current.h, ...QUALITY[quality] }));
       if (audio.current) socket.send(JSON.stringify({ type: "audio", on: true }));
     };
     socket.onmessage = (ev) => {
@@ -164,7 +170,7 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
       timer = window.setTimeout(() => {
         const r = el.getBoundingClientRect();
         view.current = { w: Math.max(320, Math.floor(r.width)), h: Math.max(240, Math.floor(r.height)) };
-        send({ type: "view", width: view.current.w, height: view.current.h, quality: QUALITY[quality] });
+        send({ type: "view", width: view.current.w, height: view.current.h, ...QUALITY[quality] });
       }, 250);
     });
     ro.observe(el);
@@ -197,6 +203,7 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
       return;
     }
     const ctx = new AudioContext({ sampleRate: 24000 });
+    void ctx.resume();
     audio.current = { ctx, next: 0 };
     send({ type: "audio", on: true });
     setSound(true);
@@ -205,9 +212,25 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
   // Input --------------------------------------------------------------------------
 
   const point = (e: { clientX: number; clientY: number }) => {
-    const c = canvas.current!;
-    const r = c.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) * c.width) / r.width, y: ((e.clientY - r.top) * c.height) / r.height };
+    const r = canvas.current!.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) * view.current.w) / r.width, y: ((e.clientY - r.top) * view.current.h) / r.height };
+  };
+
+  // At most one pointer move per screen refresh; only the latest position matters.
+  const pendingMove = useRef<object | null>(null);
+  const flushMove = () => {
+    if (pendingMove.current) send(pendingMove.current);
+    pendingMove.current = null;
+  };
+  const queueMove = (msg: object) => {
+    const first = pendingMove.current === null;
+    pendingMove.current = msg;
+    if (first) {
+      requestAnimationFrame(() => {
+        if (pendingMove.current) send(pendingMove.current);
+        pendingMove.current = null;
+      });
+    }
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -217,6 +240,7 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
       return;
     }
     e.currentTarget.setPointerCapture(e.pointerId);
+    flushMove();
     send({ type: "mouse", kind: "down", ...point(e), button: e.button, buttons: e.buttons, clicks: e.detail || 1, mods: mods(e) });
   };
 
@@ -228,7 +252,7 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
       touch.current = { ...t, x: e.clientX, y: e.clientY };
       return;
     }
-    send({ type: "mouse", kind: "move", ...point(e), buttons: e.buttons, mods: mods(e) });
+    queueMove({ type: "mouse", kind: "move", ...point(e), buttons: e.buttons, mods: mods(e) });
   };
 
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -242,14 +266,14 @@ export function RemoteBrowser({ conn, command, onReconnect, onDownload, notify }
       }
       return;
     }
+    flushMove();
     send({ type: "mouse", kind: "up", ...point(e), button: e.button, buttons: e.buttons, clicks: e.detail || 1, mods: mods(e) });
   };
 
   const onWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
-    const c = canvas.current!;
-    const r = c.getBoundingClientRect();
-    send({ type: "mouse", kind: "wheel", x: ((e.clientX - r.left) * c.width) / r.width, y: ((e.clientY - r.top) * c.height) / r.height,
+    const r = canvas.current!.getBoundingClientRect();
+    send({ type: "mouse", kind: "wheel", x: ((e.clientX - r.left) * view.current.w) / r.width, y: ((e.clientY - r.top) * view.current.h) / r.height,
       dx: e.deltaX, dy: e.deltaY, mods: mods(e) });
   }, [send]);
 

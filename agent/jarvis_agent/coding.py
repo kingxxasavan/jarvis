@@ -33,19 +33,45 @@ def _version_key(p: Path) -> tuple[int, ...]:
     return tuple(int(x) for x in re.findall(r"\d+", p.parent.parent.name)[:4]) or (0,)
 
 
+def claude_candidates() -> list[Path]:
+    """Every Claude Code executable on this computer, best first.
+
+    The Claude desktop app keeps its own copy in claude-code/<version>/<hash>/.
+    A normal install puts it under %APPDATA%; the Microsoft Store build is
+    sandboxed, so the same folder lives under %LOCALAPPDATA%/Packages/<app>/LocalCache.
+    """
+    found: list[Path] = []
+    if IS_WIN:
+        appdata = Path(os.environ.get("APPDATA", ""))
+        local = Path(os.environ.get("LOCALAPPDATA", ""))
+        roots = [appdata / "Claude" / "claude-code", local / "Claude" / "claude-code", local / "AnthropicClaude" / "claude-code"]
+        if (local / "Packages").is_dir():
+            roots += [p / "LocalCache" / "Roaming" / "Claude" / "claude-code" for p in (local / "Packages").glob("*Claude*")]
+        for root in roots:
+            if root.is_dir():
+                found += sorted(root.glob("*/*/claude.exe"), key=lambda p: (_version_key(p), p.stat().st_mtime), reverse=True)
+        found += [p for p in (Path.home() / ".local" / "bin" / "claude.exe",) if p.exists()]
+    on_path = shutil.which("claude")
+    if on_path:
+        found.append(Path(on_path))
+    return found
+
+
 def find_claude(configured: str = "") -> str | None:
     if configured and Path(configured).exists():
         return configured
-    found = shutil.which("claude")
-    if found:
-        return found
-    if IS_WIN:
-        # The copy bundled with the Claude desktop app: %APPDATA%/Claude/claude-code/<version>/<hash>/claude.exe
-        root = Path(os.environ.get("APPDATA", "")) / "Claude" / "claude-code"
-        exes = sorted(root.glob("*/*/claude.exe"), key=_version_key, reverse=True) if root.is_dir() else []
-        if exes:
-            return str(exes[0])
-    return None
+    candidates = claude_candidates()
+    return str(candidates[0]) if candidates else None
+
+
+def claude_signed_in(exe: str) -> bool | None:
+    """True/False from `claude auth status`; None if it could not be checked."""
+    try:
+        res = subprocess.run([exe, "auth", "status"], capture_output=True, text=True, timeout=30,
+                             creationflags=subprocess.CREATE_NO_WINDOW if IS_WIN else 0)
+        return bool(json.loads(res.stdout or "{}").get("loggedIn"))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
 
 
 def find_codex(configured: str = "") -> str | None:
