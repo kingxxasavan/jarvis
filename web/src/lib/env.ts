@@ -1,6 +1,8 @@
 // Server configuration, read lazily so a missing value fails the request that
 // needs it with a clear message instead of failing the whole build.
 
+import { supabaseOrigin } from "./supabase/url.ts";
+
 function need(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Missing environment variable ${name}. See web/.env.example.`);
@@ -8,7 +10,7 @@ function need(name: string): string {
 }
 
 export const env = {
-  supabaseUrl: () => need("NEXT_PUBLIC_SUPABASE_URL"),
+  supabaseUrl: () => supabaseOrigin(need("NEXT_PUBLIC_SUPABASE_URL")),
   supabaseKey: () => need("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"),
   ownerEmail: () => need("OWNER_EMAIL").trim().toLowerCase(),
   ownerName: () => process.env.OWNER_NAME || "Sir",

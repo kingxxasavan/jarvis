@@ -3,10 +3,11 @@
 // not the owner is signed out. API routes repeat the owner check themselves.
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { supabaseOrigin } from "./lib/supabase/url";
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const url = supabaseOrigin(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   if (!url || !key) return new NextResponse("JARVIS is not configured yet. See web/.env.example.", { status: 503 });
 
