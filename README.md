@@ -64,70 +64,168 @@ Settings, in this order:
    first add your Vercel domain under arkia's Firebase > Authentication > Settings > Authorized domains.
 4. Optional: **Import watch history** from Google Takeout (YouTube and YouTube Music > history > JSON) so
    "play something I watched" covers videos watched outside Jarvis.
-5. **Devices > Add device**: copy the `python main.py pair ...` command it shows (shown once).
+5. **Devices > Add device**: copy the pair command it shows (shown once), then follow section 4.
 
-## 4. The laptop (24/7) and the home PC
+## 4. Laptop install (Windows 11, copy and paste)
 
-Needs Python 3.10+ and git. For building projects, also Node.js plus Codex and/or Claude Code, signed in with
-your own accounts:
+Do this on the always-on laptop (and later the home PC, with a different device name). Open **Terminal**
+(right-click Start > Terminal) and paste each block in order. Each block can be pasted whole.
 
-```bash
-npm install -g @openai/codex
+**Before you start:** in JARVIS, open Settings > Devices > **Add device**, name it `Laptop`, and keep the
+pair command it shows. It is shown only once.
+
+### Step 1: install the tools
+
+```powershell
+winget install -e --id Git.Git --accept-package-agreements --accept-source-agreements
+winget install -e --id Python.Python.3.12 --accept-package-agreements
+winget install -e --id Google.Chrome --accept-package-agreements
+winget install -e --id Cloudflare.cloudflared --accept-package-agreements
+winget install -e --id GitHub.cli --accept-package-agreements
+winget install -e --id OpenJS.NodeJS.LTS --accept-package-agreements
 ```
 
-```bash
-codex login
+**Close Terminal and open a new one** so it finds the new programs.
+
+### Step 2: sign in to GitHub
+
+```powershell
+gh auth login
 ```
 
-```bash
-npm install -g @anthropic-ai/claude-code
+Answer: GitHub.com > HTTPS > Yes > Login with a web browser. Sign in as `kingxxasavan`.
+
+### Step 3: download JARVIS and set up the agent
+
+```powershell
+cd ~
+gh repo clone kingxxasavan/jarvis
+cd ~\jarvis\agent
+py main.py setup
 ```
 
-```bash
-claude auth login
+### Step 4: pair this laptop
+
+Paste the command from Settings > Devices, starting it with `py` instead of `python`:
+
+```powershell
+cd ~\jarvis\agent
+py main.py pair PASTE-YOUR-CODE-HERE
 ```
 
-Then, in this repo's `agent` folder:
+### Step 5: Claude Code and Codex (so JARVIS can build projects)
 
-```bash
-python main.py setup
+```powershell
+npm install -g @anthropic-ai/claude-code @openai/codex
 ```
 
-```bash
-python main.py pair <code from Settings>
+```powershell
+claude.cmd auth login
 ```
 
-```bash
-python main.py autostart on
+```powershell
+codex.cmd login
 ```
 
-```bash
-python main.py
+Sign in with your Claude and ChatGPT accounts in the browser windows that open.
+
+### Step 6: keep it awake 24/7
+
+```powershell
+powercfg /change standby-timeout-ac 0
+powercfg /change hibernate-timeout-ac 0
+powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0
+powercfg /setactive SCHEME_CURRENT
 ```
 
-**Apps streaming** needs Chrome and Cloudflare's tunnel program on the laptop:
+Never sleeps on the charger, and closing the lid does nothing. Keep it plugged in.
 
-```bash
-winget install --id Cloudflare.cloudflared
+### Step 7: check everything
+
+```powershell
+cd ~\jarvis\agent
+py main.py doctor
 ```
 
-That gives a free tunnel whose address changes on each restart; the agent reports every new one to JARVIS
-automatically. For a fixed address on your own domain, create a tunnel in the Cloudflare dashboard pointing at
-`http://localhost:8788` and put `CLOUDFLARE_TUNNEL_TOKEN=` and `STREAM_PUBLIC_URL=https://apps.yourdomain` in
-`agent/.env`. For VS Code, run `code tunnel service install` once on the laptop and set `VSCODE_TUNNEL=<the
-machine name it shows>` in `agent/.env`. Set `JARVIS_STREAM=off` to disable streaming on a device.
+You want `connection OK`, and a path (not "not installed") for chrome, cloudflared, codex and claude.
 
-Step-by-step for a fresh Windows laptop: [docs/thinkpad-setup.md](docs/thinkpad-setup.md).
+### Step 8: start with Windows, and start now
 
-`python main.py doctor` checks the connection and which coding tools it found. Projects are created in
-`~/JarvisProjects` (set `JARVIS_WORKSPACE` in `agent/.env` to change it). Logs are in `agent/data/agent.log`.
+```powershell
+cd ~\jarvis\agent
+py main.py autostart on
+py main.py
+```
 
-For an always-on laptop: Windows Settings > System > Power > Screen and sleep: "Never" when plugged in, and
-Control Panel > Power Options > "Choose what closing the lid does" > Do nothing. On Linux, `autostart on`
-installs a systemd user service; run `sudo loginctl enable-linger $USER` so it runs without a login.
+Within about 20 seconds it prints `JARVIS agent online as 'Laptop'` and `apps are reachable at https://...`.
+Leave this window open while you test from your phone or Chromebook:
 
-Pair the home PC the same way with a different name. When several devices are online, Jarvis picks the one you
-name ("on my home PC") or the most recently active one.
+- Chat: "Open Spotify on my laptop".
+- Apps tab: the laptop's Chrome appears. Click into the page to type; the speaker icon turns sound on. Sign in to
+  Spotify and Google there once and they stay signed in.
+- Close the lid and check the Apps picture still moves. If it freezes, leave the lid slightly open.
+
+When it works, close the window and run JARVIS hidden in the background:
+
+```powershell
+cd ~\jarvis\agent
+Start-Process .venv\Scripts\pythonw.exe -ArgumentList "main.py","run" -WorkingDirectory (Get-Location)
+```
+
+From now on it also starts by itself whenever you sign in to Windows. Logs: `~\jarvis\agent\data\agent.log`.
+
+### Optional: VS Code from anywhere
+
+```powershell
+winget install -e --id Microsoft.VisualStudioCode --accept-package-agreements
+```
+
+Open a new Terminal:
+
+```powershell
+code tunnel service install
+```
+
+Sign in with GitHub and note the machine name it prints. Then add it to the agent settings (replace the name):
+
+```powershell
+cd ~\jarvis\agent
+Add-Content .env "VSCODE_TUNNEL=PASTE-MACHINE-NAME-HERE"
+```
+
+Restart the agent (Step 9) and the VS Code button in Apps opens it.
+
+### Step 9: update JARVIS later
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" | Where-Object CommandLine -like '*main.py*run*' | ForEach-Object { Stop-Process -Id $_.ProcessId }
+cd ~\jarvis
+git pull
+cd agent
+py main.py setup
+Start-Process .venv\Scripts\pythonw.exe -ArgumentList "main.py","run" -WorkingDirectory (Get-Location)
+```
+
+### If something is wrong
+
+| You see | Fix |
+| --- | --- |
+| `connection FAILED: ... removed or its token is wrong` | Add the device again in Settings and redo Step 4. |
+| `cloudflared` or `chrome` not installed | Redo its line from Step 1, then open a new Terminal. |
+| `running scripts is disabled` | Use `claude.cmd` / `codex.cmd` exactly as written above. |
+| Apps tab says no device is streaming | Check the agent window shows `apps are reachable at https://...`. |
+| Nothing works after a Windows Update restart | The agent starts when you sign in to Windows. Sign in once. |
+
+### Other settings (`~\jarvis\agent\.env`)
+
+- `JARVIS_WORKSPACE`: where projects are created (default `~\JarvisProjects`).
+- `JARVIS_DOWNLOADS`: where downloads go (default `~\Downloads\JARVIS`).
+- `JARVIS_STREAM=off`: turn app streaming off on this device.
+- Fixed apps address on your own domain: create a Cloudflare tunnel pointing at `http://localhost:8788`, then set
+  `CLOUDFLARE_TUNNEL_TOKEN=` and `STREAM_PUBLIC_URL=https://apps.yourdomain`.
+
+When several devices are online, JARVIS uses the one you name ("on my home PC") or the most recently active.
+On Linux the same steps apply with `python3`, and `autostart on` installs a systemd user service.
 
 ## Security model
 
