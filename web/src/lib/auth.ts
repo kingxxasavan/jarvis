@@ -12,7 +12,7 @@ export class HttpError extends Error {
   }
 }
 
-export async function requireOwner(opts: { strongAuth?: boolean } = {}): Promise<Owner> {
+export async function requireOwner(): Promise<Owner> {
   const sb = await serverClient();
   const { data, error } = await sb.auth.getUser();
   if (error || !data.user) throw new HttpError(401, "Sign in first.");
@@ -21,17 +21,14 @@ export async function requireOwner(opts: { strongAuth?: boolean } = {}): Promise
   const { data: level } = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
   const aal = level?.currentLevel || "aal1";
   if (level?.nextLevel === "aal2" && aal !== "aal2") throw new HttpError(401, "Two-factor check required.");
-  if (opts.strongAuth && aal !== "aal2") {
-    throw new HttpError(403, "Turn on two-factor authentication in Settings first. Device control requires it.");
-  }
   return { sb, userId: data.user.id, email, aal };
 }
 
 // Wraps a route handler: owner check, JSON errors, never a stack trace.
-export function route<T>(handler: (owner: Owner, req: Request) => Promise<T>, opts: { strongAuth?: boolean } = {}) {
+export function route<T>(handler: (owner: Owner, req: Request) => Promise<T>) {
   return async (req: Request) => {
     try {
-      const owner = await requireOwner(opts);
+      const owner = await requireOwner();
       const out = await handler(owner, req);
       return out instanceof Response ? out : NextResponse.json(out ?? { ok: true });
     } catch (err) {

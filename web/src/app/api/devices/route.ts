@@ -14,12 +14,11 @@ export const GET = route(async ({ sb }) => {
   };
 });
 
-// Pairing a device gives it control of a computer, so it needs two-factor.
 export const POST = route(async ({ sb }, req) => {
   const b = await readJson<{ name?: string }>(req);
   if (!b.name?.trim()) throw new HttpError(400, "Name the device, e.g. Laptop or Home PC.");
   return await createDevice(sb, b.name);
-}, { strongAuth: true });
+});
 
 export const DELETE = route(async ({ sb }, req) => {
   const id = new URL(req.url).searchParams.get("id");

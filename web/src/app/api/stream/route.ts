@@ -4,8 +4,7 @@ import { mintPass } from "@/lib/stream.ts";
 
 export const runtime = "nodejs";
 
-// Passes to one device's streamed apps. Viewing and controlling a computer
-// needs the same two-factor level as pairing it.
+// Short-lived passes to one device's streamed apps.
 export const GET = route(async ({ sb }, req) => {
   const wanted = new URL(req.url).searchParams.get("device");
   let q = sb.from("devices").select("id, name, last_seen, stream_url, stream_secret, stream_info")
@@ -27,4 +26,4 @@ export const GET = route(async ({ sb }, req) => {
     files: mintPass(device.stream_secret, "files", 900),
     vscode: (device.stream_info as { vscode?: string } | null)?.vscode || "",
   };
-}, { strongAuth: true });
+});

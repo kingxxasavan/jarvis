@@ -47,4 +47,4 @@ export const POST = route(async ({ sb }, req) => {
   const changed = await setJobStatus(sb, b.id, t[0], t[1]);
   if (!changed) throw new HttpError(409, "That task has already moved on.");
   return { ok: true };
-}, { strongAuth: true });
+});

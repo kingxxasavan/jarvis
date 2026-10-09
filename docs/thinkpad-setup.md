@@ -6,8 +6,7 @@ Every command runs in **Terminal** (right-click Start > Terminal). Copy one bloc
 
 1. Supabase SQL Editor: run the "Apps" migration (the `alter table public.devices ...` and
    `agent_stream` block from `supabase/schema.sql`) if you have not already.
-2. JARVIS > Settings > **Turn on two-factor**.
-3. JARVIS > Settings > Devices > **Add device**, name it `Laptop`, and keep the
+2. JARVIS > Settings > Devices > **Add device**, name it `Laptop`, and keep the
    `python main.py pair ...` command it shows open (it is shown once).
 
 ## 1. Install the tools
@@ -145,5 +144,4 @@ Then restart the laptop (or end `pythonw.exe` in Task Manager and run the Start-
 | `cloudflared not installed` | Re-run its winget line, open a new Terminal. |
 | `chrome not installed` | Re-run the Chrome winget line. |
 | Apps tab: "No device is streaming apps yet" | Run the SQL migration; check the agent window shows the trycloudflare address. |
-| Apps tab: "Turn on two-factor" | Settings > Turn on two-factor. |
 | After a Windows Update restart nothing works | The agent starts when someone signs in. Sign in once, or set up automatic sign-in. |

@@ -93,7 +93,7 @@ export function AppsView({ command, onCommand, onYouTube, notify }: {
             <>
               <p className="muted small">
                 Apps stream from a device running the JARVIS agent with Chrome and cloudflared installed
-                (<code>winget install --id Cloudflare.cloudflared</code>). Two-factor must be on.
+                (<code>winget install --id Cloudflare.cloudflared</code>).
               </p>
               <button className="btn" onClick={connect}><Icon name="reload" size={14} /> Try again</button>
             </>

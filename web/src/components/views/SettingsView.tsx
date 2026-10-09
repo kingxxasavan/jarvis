@@ -79,7 +79,7 @@ function Security({ notify, onChange }: { notify: Notify; onChange: () => void }
         </div>
       ) : (
         <>
-          <p className="small">Two-factor is required before Jarvis may control your devices.</p>
+          <p className="small">Optional. Adds a 6-digit code from an authenticator app at sign-in.</p>
           <button className="btn primary" onClick={start}><Icon name="shield" size={14} /> Turn on two-factor</button>
         </>
       )}

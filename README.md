@@ -38,7 +38,7 @@ The website works on its own. When a device agent is online, Jarvis can also use
 4. Authentication > Users > Add user: your email and a strong password (tick "Auto confirm").
 5. Project Settings > API: note the Project URL and the **publishable** key.
 
-Two-factor (TOTP) is built into Supabase Auth; you turn it on from JARVIS Settings after the first sign-in.
+Use a long password: whoever signs in can control your paired devices. Two-factor (an authenticator-app code) is optional in Settings.
 
 ## 2. Vercel (the website)
 
@@ -58,7 +58,7 @@ Model ids change often. Before changing `NVIDIA_MODEL`, check https://integrate.
 
 Settings, in this order:
 
-1. **Turn on two-factor.** Device control is refused without it.
+1. Optional: **Turn on two-factor**.
 2. **Import profile JSON**: pick `about_me_complete.json`.
 3. **arkia.buzz**: link with your arkia email and password (used once, never stored), or Google. For Google,
    first add your Vercel domain under arkia's Firebase > Authentication > Settings > Authorized domains.
@@ -132,7 +132,7 @@ name ("on my home PC") or the most recently active one.
 ## Security model
 
 - One owner. The site rejects every account except `OWNER_EMAIL`; sign-ups are off in Supabase; every table
-  has row-level security; 2FA is enforced at sign-in once enabled and is required to pair devices and approve tasks.
+  has row-level security. Two-factor is optional; once enabled it is enforced at every sign-in.
 - Devices never accept connections. The agent polls Supabase with a device token; the database functions it may
   call check the token's hash and only touch that device's jobs. It holds no service key and cannot read any table.
 - Code changes on a device (coding runs, new plugins) wait for your approval card. Plugins run only after you read
