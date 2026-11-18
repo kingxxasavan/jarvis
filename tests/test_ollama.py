@@ -100,15 +100,19 @@ async def test_a_missing_anexis_model_points_at_the_command_instead_of_being_swa
 # ---- Ollama cloud, with an API key -----------------------------------------
 
 def cloud(monkeypatch, good_key="ok-key"):
+    from anexis import hosted
+
     seen = []
 
     def site(request):
-        seen.append((request.headers.get("authorization"), json.loads(request.content)["model"]))
         if request.headers.get("authorization") != f"Bearer {good_key}":
             return httpx.Response(401, json={"error": "unauthorized"})
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [{"id": "gpt-oss:120b"}, {"id": "qwen3-coder:480b"}]})
+        seen.append((request.headers.get("authorization"), json.loads(request.content)["model"]))
         return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
-    monkeypatch.setattr(ollama, "_transport", httpx.MockTransport(site))
+    monkeypatch.setattr(hosted, "_transport", httpx.MockTransport(site))
     return seen
 
 
@@ -157,7 +161,9 @@ async def test_a_network_problem_is_not_called_a_bad_key(settings, monkeypatch):
     def blocked(request):
         raise httpx.ProxyError("403 Forbidden")
 
-    monkeypatch.setattr(ollama, "_transport", httpx.MockTransport(blocked))
+    from anexis import hosted
+
+    monkeypatch.setattr(hosted, "_transport", httpx.MockTransport(blocked))
     settings.env = {"OLLAMA_API_KEY": "k"}
     said = []
     assert await ollama.setup_cloud(settings, None, said.append) is False

@@ -7,6 +7,7 @@
     anexis watch           what Anexis is doing, live, from another terminal
     anexis ollama [model]  use Ollama on this server, set up in one go
     anexis ollama cloud    use Ollama's hosted models with your Ollama API key
+    anexis nvidia [model]  use Nvidia's hosted models, a Mistral one that works
     anexis start | stop | restart | status
     anexis serve           run the server in this terminal (what systemd runs)
 """
@@ -239,6 +240,22 @@ async def cmd_ollama(settings: Settings, args) -> None:
     await cmd_status(settings, args)
 
 
+async def cmd_nvidia(settings: Settings, args) -> None:
+    import getpass
+
+    from anexis.hosted import NVIDIA, setup
+
+    def say(line: str) -> None:
+        console.print(line, markup=False, highlight=False)
+
+    ask = getpass.getpass if sys.stdin.isatty() else None
+    if not await setup(settings, NVIDIA, args.model, say, ask):
+        sys.exit(1)
+    stop_server(settings)  # the next start reads the new settings
+    await start_server(settings)
+    await cmd_status(settings, args)
+
+
 COMMANDS = {
     "chat": (cmd_chat, "talk to Anexis (the default)"),
     "ask": (cmd_ask, "one question, one answer"),
@@ -250,6 +267,7 @@ COMMANDS = {
     "restart": (cmd_restart, "stop, then start again (after editing .env or anexis.toml)"),
     "status": (cmd_status, "is it running, on which model"),
     "ollama": (cmd_ollama, "use Ollama: on this server, or `anexis ollama cloud` with your API key"),
+    "nvidia": (cmd_nvidia, "use Nvidia's hosted models: finds a Mistral one that works with your key"),
     "serve": (cmd_serve, "run the server in this terminal (for systemd)"),
 }
 
@@ -261,6 +279,8 @@ def main(argv: list[str] | None = None) -> None:
         p = sub.add_parser(name, help=about)
         if name == "ask":
             p.add_argument("text", nargs="+")
+        if name == "nvidia":
+            p.add_argument("model", nargs="?", help="a model id from build.nvidia.com. Empty tries Mistral models until one works")
         if name == "ollama":
             p.add_argument("model", nargs="*", help="a model like gpt-oss:20b (empty picks one for this server), or: cloud [model]")
     args = parser.parse_args(argv)

@@ -22,25 +22,32 @@ ROLES = ("chat", "tools", "coder", "small", "embed")
 # Used only to suggest a model when the saved one is gone.
 NOT_FOR_CHAT = re.compile(r"embed|rerank|guard|safety|whisper|tts|asr|ocr|parse|retriev|clip|nv-|bge|e5|diffusion|flux|sdxl", re.I)
 PREFER = {
-    "chat": [r"llama-?[4-9]", r"llama-3\.[3-9]", r"qwen-?3", r"deepseek", r"mistral-(large|medium)", r"gpt-oss", r"instruct", r"chat"],
+    "chat": [r"llama-?[4-9]", r"llama-3\.[3-9]", r"qwen-?3", r"deepseek", r"mistral-(small|medium|large)", r"gpt-oss", r"instruct", r"chat"],
     "embed": [r"nv-embed", r"embedqa", r"e5", r"bge", r"arctic", r"embed"],
     "tools": [r"gpt-oss-20b", r"nemotron.*nano", r"mistral-small", r"qwen-?3.*a3b", r"qwen-?3[:-]?8b", r"llama-3\.[1-9]-8b", r"8b-instruct", r"qwen-?3[:-]?4b"],
 }
 
 
-def suggest(available: list[str], role: str) -> str:
-    """A reasonable model for a job out of what the provider has, or ""."""
+def suggest(available: list[str], role: str, like: str = "") -> str:
+    """A reasonable model for a job out of what the provider has, or "".
+    `like` is the model being replaced: one from the same maker comes first
+    (a gone mistralai/... model is replaced by another mistralai/... one)."""
     patterns = PREFER.get(role, PREFER["chat"])
     pool = list(available) if role == "embed" else [m for m in available if not NOT_FOR_CHAT.search(m)]
-    for pattern in patterns:
-        hits = sorted(m for m in pool if re.search(pattern, m, re.I))
-        if hits:
-            def size(name: str) -> float:  # among lookalikes the biggest is a fair guess at the best
-                found = re.search(r"(\d+(?:\.\d+)?)b\b", name, re.I)
-                return float(found.group(1)) if found else 0.0
-
-            return max(hits, key=size)
+    maker = like.split("/", 1)[0] + "/" if "/" in like else ""
+    same = [m for m in pool if maker and m.startswith(maker)]
+    for group in ([same, pool] if same else [pool]):
+        for pattern in patterns:
+            hits = sorted(m for m in group if re.search(pattern, m, re.I))
+            if hits:
+                return max(hits, key=_size)
     return ""
+
+
+def _size(name: str) -> float:
+    """The "70b" in a name: among lookalikes the biggest is a fair guess at the best."""
+    found = re.search(r"(\d+(?:\.\d+)?)b\b", name, re.I)
+    return float(found.group(1)) if found else 0.0
 
 
 def chat_models(available: list[str]) -> list[str]:
@@ -70,15 +77,22 @@ async def survey(router) -> list[dict]:
     return list(await asyncio.gather(*(look(p) for p in router.providers)))
 
 
+TEST_TOOL = {"type": "function", "function": {
+    "name": "time_now", "description": "Current date and time.", "parameters": {"type": "object", "properties": {}}}}
+
+
 async def try_model(provider: OpenAIProvider, model: str, role: str = "chat") -> str:
-    """A one word test. Returns "" when the model works, else what went wrong."""
+    """A tiny real test. Returns "" when the model works, else what went wrong.
+    Chat models get a tool with it, since Anexis needs tools: a model the
+    provider will not give tools to does not count as working."""
     try:
         if role == "embed":
             await provider.embed(model, ["hello"], "query")
-        else:
-            reply = await provider.chat(model, [{"role": "user", "content": "Reply with one word: ok"}], stream=False)
-            if not reply.content.strip() and not reply.tool_calls:
-                return "it answered with nothing"
+            return ""
+        messages = [{"role": "user", "content": "What time is it? Use the time_now tool."}]
+        reply = await provider.chat(model, messages, [TEST_TOOL], stream=False)
+        if not reply.content.strip() and not reply.tool_calls:
+            return "it answered with nothing"
     except ProviderError as e:
         return str(e)[:300]
     return ""
@@ -114,7 +128,7 @@ async def heal(settings, router) -> list[str]:
             if seen["name"] == "ollama" and model == "anexis":
                 notes.append("ollama: the anexis model is not built yet. Run: anexis ollama")
                 continue
-            pick = suggest(seen["available"], role)
+            pick = suggest(seen["available"], role, like=model)
             if role == "chat" and not pick:
                 notes.append(f"{seen['name']}: {model} is gone and nothing close was found. Pick one with /model.")
                 continue

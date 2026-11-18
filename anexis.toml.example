@@ -30,7 +30,7 @@ base_url = "https://integrate.api.nvidia.com/v1"
 api_key_env = "NVIDIA_API_KEY"
 embed_input_type = true
 [providers.models]
-chat = "meta/llama-3.3-70b-instruct"
+chat = "mistralai/mistral-small-4-119b-2603"   # anexis nvidia finds a working one
 embed = "nvidia/nv-embedqa-e5-v5"
 
 # Ollama's hosted models with your Ollama API key. `anexis ollama cloud` sets

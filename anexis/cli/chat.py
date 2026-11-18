@@ -1,7 +1,7 @@
 """The terminal chat. Plain on purpose: a one line status, your words after a
 `>`, Anexis's answer indented under it, tool calls in grey.
 
-    anexis · nvidia llama-3.3-70b · 42 memories · 31 tools · ask
+    anexis · nvidia mistral-small-4-119b-2603 · 42 memories · 31 tools · ask
     due soon: Chem lab writeup (due 2026-11-20 23:59)
     /help for commands · ctrl+c stops a reply · /quit leaves
 

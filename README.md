@@ -6,7 +6,7 @@ SQL memory that learns you, tools, coding), with everything that needs a desktop
 taken out. No screen, no deck, no voice, no token to set up.
 
 ```
-anexis · nvidia llama-3.3-70b-instruct · 214 memories · 259 tools · ask
+anexis · nvidia mistral-small-4-119b-2603 · 214 memories · 259 tools · ask
 due soon: Chem 101: Lab 3 writeup (due 2026-11-20 23:59)
 /help for commands · ctrl+c stops a reply · /quit leaves
 
@@ -58,8 +58,17 @@ hidden typing, tries the model with it, and only then saves the key in
 `~/.anexis/.env` (readable only by you) and points `anexis.toml` at Ollama
 cloud. A key that is refused changes nothing. Never paste a key into a chat.
 
-For Nvidia's hosted models instead, put `NVIDIA_API_KEY=...` in
-`~/.anexis/.env`, `anexis restart`, and pick its model with `/model`.
+### Nvidia, with your API key
+
+```bash
+anexis nvidia                         # finds a Mistral model that works
+anexis nvidia mistralai/mistral-small-4-119b-2603   # or name one
+```
+
+Same as above: it asks for your key (free at build.nvidia.com) with hidden
+typing. Then it reads Nvidia's live model list and tries the Mistral models one
+by one, each with a real tool call, until one works. Nvidia renames and retires
+models often, so nothing is taken on trust. Only the one that worked is saved.
 
 ## Use it
 
@@ -81,6 +90,7 @@ To have it start with the server, see the top of `anexis.service`.
 | `anexis watch` | what Anexis is doing, live, from a second terminal |
 | `anexis ollama [model]` | use Ollama on the server, set up in one go |
 | `anexis ollama cloud [model]` | use Ollama's hosted models with your API key |
+| `anexis nvidia [model]` | use Nvidia's hosted models, a Mistral one that works |
 | `anexis status` / `start` / `stop` / `restart` | the background server |
 
 In the chat: `/help` lists everything. The main ones are `/new`, `/chats`,
@@ -92,14 +102,15 @@ true about you), `/forget <n>`, `/why`, `/code <what to build>`, `/tools`,
 
 `/model` lists the models each provider really has right now, with the one in
 use marked. `/model llama` searches the list, `/model 3` switches to number 3.
-A model is tried with a one word test before the switch, so a broken pick
-changes nothing. The switch works at once and is saved in `anexis.toml` (the
+A model is tried for real (with a tool call, since Anexis needs tools) before
+the switch, so a broken pick changes nothing. The switch works at once and is saved in `anexis.toml` (the
 old file is kept as `anexis.toml.bak`). Add a job to switch just that one:
 `/model 3 coder` (jobs: chat, tools, coder, small, embed).
 
 Providers retire models. When the one Anexis is set to use is gone, Anexis
-swaps it for the closest model that provider still has when it starts, saves
-that, and says so at the top of the chat.
+swaps it for the closest model that provider still has when it starts (one
+from the same maker first, so a gone Mistral model becomes another Mistral
+model), saves that, and says so at the top of the chat.
 
 When Anexis wants to do something risky (run a command, end a program, write
 outside its workspace) it asks first, right in the chat: `allow? y/N`. To let

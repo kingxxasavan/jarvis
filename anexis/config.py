@@ -35,8 +35,9 @@ DEFAULT_PROVIDERS = [
         "base_url": "https://integrate.api.nvidia.com/v1",
         "api_key_env": "NVIDIA_API_KEY",
         "embed_input_type": True,
+        # `anexis nvidia` checks this still works, or finds a Mistral one that does.
         "models": {
-            "chat": "meta/llama-3.3-70b-instruct",
+            "chat": "mistralai/mistral-small-4-119b-2603",
             "embed": "nvidia/nv-embedqa-e5-v5",
         },
     },

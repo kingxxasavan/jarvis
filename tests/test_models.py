@@ -125,3 +125,10 @@ async def test_a_model_that_dies_mid_chat_points_at_model(settings, memory):
     settings.learn = False
     result = await Agent(settings, memory, router, registry).run_turn(None, "hi there")
     assert "/model" in result["error"]
+
+
+def test_a_gone_model_is_replaced_by_one_from_the_same_maker_first():
+    have = ["meta/llama-4-maverick-17b-128e-instruct", "mistralai/mistral-small-4-119b-2603", "mistralai/mistral-medium-3-instruct"]
+    assert suggest(have, "chat", like="mistralai/mistral-large-2-instruct") == "mistralai/mistral-small-4-119b-2603"
+    assert suggest(have, "chat", like="meta/llama-3.3-70b-instruct") == "meta/llama-4-maverick-17b-128e-instruct"
+    assert suggest(have, "chat") == "meta/llama-4-maverick-17b-128e-instruct"
