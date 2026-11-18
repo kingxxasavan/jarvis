@@ -1,8 +1,7 @@
-.env
-.env*.local
+.venv/
 __pycache__/
 *.pyc
-.venv/
-agent/data/
-agent/plugins/drafts/
-.DS_Store
+.pytest_cache/
+.ruff_cache/
+.env
+anexis.toml
