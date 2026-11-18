@@ -34,6 +34,13 @@ async def test_only_requests_meant_for_this_machine_are_answered(live):
         assert (await http.get("/health", headers={"Origin": "https://evil.example"})).status_code == 403
 
 
+async def test_remembering_the_same_thing_twice_keeps_one_copy(live):
+    anexis, client = await live()
+    first = await client.remember("I have chem lab on fridays")
+    again = await client.remember("I have chem lab on fridays")
+    assert first["id"] == again["id"] and anexis.memory.count() == 1
+
+
 async def test_pinned_memories_are_always_true_facts(live):
     anexis, client = await live()
     saved = await client.remember("My name is Sam", pinned=True)

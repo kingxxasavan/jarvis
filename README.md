@@ -8,7 +8,7 @@ taken out. No screen, no deck, no voice, no token to set up.
 ```
 anexis · nvidia llama-3.3-70b-instruct · 214 memories · 259 tools · ask
 due soon: Chem 101: Lab 3 writeup (due 2026-11-20 23:59)
-/help for commands · ctrl+c stops a reply · ctrl+d quits
+/help for commands · ctrl+c stops a reply · /quit leaves
 
 > whats due this week and can you make me a study plan
   [tool] list_items type=assignment
@@ -64,12 +64,26 @@ When Anexis wants to do something risky (run a command, end a program, write
 outside its workspace) it asks first, right in the chat: `allow? y/N`. To let
 everything run without asking, set `control = "full"` in `~/.anexis/anexis.toml`.
 
-### Reaching it from somewhere else
+### Reaching it from a browser (Shellngn)
 
 The server only listens on the server itself (127.0.0.1). That is why there is
-no token: nothing outside the machine can talk to it. You reach it by SSH, and
-anywhere SSH works, Anexis works. [Tailscale](https://tailscale.com) makes SSH
-to your server work from any network without opening ports.
+no token: nothing outside the machine can talk to it. You reach it by SSH, so
+any SSH client works, including a browser one like Shellngn on a Chromebook.
+
+1. In Shellngn, add the server: its address, port 22, your user, and your SSH
+   key (or password).
+2. Connect, then type `anexis`.
+
+Good to know:
+
+* Only the server's SSH port has to be reachable. Never open port 8765.
+* Shellngn reaches your server from the internet, so SSH is open to the
+  internet too. Log in with a key and turn password login off in
+  `/etc/ssh/sshd_config` (`PasswordAuthentication no`) once the key works.
+* Closing the tab ends the chat, not Anexis. A reply that was still being
+  written stops. Type `anexis` again, then `/chats` and `/open 1` to carry on.
+* Leave with `/quit`. In a browser Ctrl+D may be taken by the browser itself.
+  Ctrl+C still stops a reply.
 
 ## Tools
 

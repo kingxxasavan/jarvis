@@ -197,6 +197,10 @@ def create_app(anexis) -> FastAPI:
             raise HTTPException(400, "Nothing to remember")
         kind = body.get("kind") if body.get("kind") in KINDS else "fact"
         pinned = bool(body.get("pinned"))
+        same = anexis.memory.find_duplicate(text)
+        if same and (not pinned or anexis.memory.get(same).pinned):
+            anexis.memory.reinforce(same)  # already known: more sure of it, not a second copy
+            return anexis.memory.get(same).public()
         memory_id = anexis.memory.add(kind, text, confidence=0.95 if pinned else 0.9,
                                       importance=0.9 if pinned else 0.7, source="told", pinned=pinned)
         return anexis.memory.get(memory_id).public()

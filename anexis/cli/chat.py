@@ -3,7 +3,7 @@
 
     anexis · nvidia llama-3.3-70b · 42 memories · 31 tools · ask
     due soon: Chem lab writeup (due 2026-11-20 23:59)
-    /help for commands · ctrl+c stops a reply · ctrl+d quits
+    /help for commands · ctrl+c stops a reply · /quit leaves
 
     > whats due this week
       [tool] list_items type=assignment
@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -258,6 +259,10 @@ def show_doctor(console: Console, checks: list[dict]) -> bool:
 
 
 async def run_chat(client: AnexisClient, home: Path) -> None:
+    # Web SSH terminals (Shellngn and the like) answer the cursor position
+    # question slowly or not at all, and prompt_toolkit then prints a warning.
+    # This prompt does not need it.
+    os.environ.setdefault("PROMPT_TOOLKIT_NO_CPR", "1")
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.patch_stdout import patch_stdout
@@ -281,7 +286,7 @@ async def run_chat(client: AnexisClient, home: Path) -> None:
         chat.say(f"due soon: {item}", "yellow")
     if health.get("tool_servers_starting"):
         chat.say(f"tool servers still starting: {', '.join(health['tool_servers_starting'])}")
-    chat.say("/help for commands · ctrl+c stops a reply · ctrl+d quits")
+    chat.say("/help for commands · ctrl+c stops a reply · /quit leaves")
 
     while True:
         try:
