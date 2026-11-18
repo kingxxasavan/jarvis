@@ -69,6 +69,7 @@ def create_app(anexis) -> FastAPI:
         status = anexis.mcp.status
         return {
             "name": settings.name,
+            "edition": "server",  # how the chat tells this apart from an older Anexis on the same port
             "memories": anexis.memory.count(),
             "tools": len(anexis.registry),
             "control": settings.control,

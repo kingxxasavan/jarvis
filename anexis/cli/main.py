@@ -25,7 +25,7 @@ from rich.markup import escape
 
 from anexis.cli.client import AnexisClient
 from anexis.config import Settings, load_settings
-from anexis.proc import is_anexis_server, start_detached, stop_process
+from anexis.proc import describe, is_anexis_server, port_owner, start_detached, stop_process
 
 console = Console()
 
@@ -43,21 +43,59 @@ def server_pid(settings: Settings) -> int | None:
     return pid if is_anexis_server(pid) else None
 
 
-async def is_up(client: AnexisClient) -> bool:
+async def probe(client: AnexisClient) -> str:
+    """"ours" when this edition answers, "other" when something else answers on
+    the port (like an older Anexis that wants a token), "none" when nothing does."""
     try:
-        await client.health()
-        return True
+        health = await client.health()
+    except httpx.HTTPStatusError:
+        return "other"
     except (httpx.HTTPError, OSError, ValueError):
-        return False
+        return "none"
+    return "ours" if isinstance(health, dict) and health.get("edition") == "server" else "other"
+
+
+async def is_up(client: AnexisClient) -> bool:
+    return await probe(client) == "ours"
+
+
+def clear_port(settings: Settings) -> None:
+    """Makes the port free for this edition. An older Anexis on it is stopped
+    (its pid file may be long gone, so it is found by the port). Anything else
+    is left alone and explained, never crashed into."""
+    holder = port_owner(settings.port)
+    if holder is None:
+        return
+    if is_anexis_server(holder):
+        stop_process(holder)
+        console.print(f"[dim]  stopped an older anexis (pid {holder}) that was using port {settings.port}[/dim]")
+        return
+    sys.exit(f"  port {settings.port} is already used by another program (pid {holder}: {describe(holder)}).\n"
+             f"  Stop that program, or give anexis another port: put ANEXIS_PORT={settings.port + 1} in ~/.anexis/.env")
 
 
 async def start_server(settings: Settings, quiet: bool = False) -> AnexisClient:
     """The server, started in the background when it is not running yet."""
     client = AnexisClient(settings.url)
-    if await is_up(client):
+    state = await probe(client)
+    if state == "none" and port_owner(settings.port):
+        # Something is on the port but not answering yet: maybe it is still starting.
+        for _ in range(30):
+            await asyncio.sleep(0.5)
+            state = await probe(client)
+            if state != "none":
+                break
+    if state == "ours":
         return client
+    clear_port(settings)
+    if state == "other" and port_owner(settings.port) is None and await probe(client) == "other":
+        sys.exit(f"  port {settings.port} answers, but not as this anexis, and its program cannot be seen.\n"
+                 f"  Stop it, or give anexis another port: put ANEXIS_PORT={settings.port + 1} in ~/.anexis/.env")
+
     settings.home.mkdir(parents=True, exist_ok=True)
-    start_detached([sys.executable, "-m", "anexis", "serve"], settings.home / "server.log")
+    log = settings.home / "server.log"
+    start = log.stat().st_size if log.is_file() else 0
+    start_detached([sys.executable, "-m", "anexis", "serve"], log)
     if not quiet:
         console.print("[dim]  starting anexis...[/dim]")
     deadline = time.monotonic() + 60
@@ -65,18 +103,20 @@ async def start_server(settings: Settings, quiet: bool = False) -> AnexisClient:
         await asyncio.sleep(0.5)
         if await is_up(client):
             return client
-    log = settings.home / "server.log"
-    tail = log.read_text(errors="replace").strip().splitlines()[-8:] if log.is_file() else []
-    sys.exit("  anexis did not come up. Last lines of " + str(log) + ":\n" + "\n".join("    " + t for t in tail))
+    with open(log, errors="replace") as f:  # only what this start wrote, not old history
+        f.seek(start)
+        tail = f.read().strip().splitlines()[-8:]
+    sys.exit(f"  anexis did not come up. It said ({log}):\n" + "\n".join("    " + t for t in tail))
 
 
 def stop_server(settings: Settings) -> bool:
-    pid = server_pid(settings)
+    """Stops this machine's anexis server: the one in the pid file, and any
+    anexis holding the port (an older one whose pid file is gone)."""
+    found = {pid for pid in (server_pid(settings), port_owner(settings.port)) if pid and is_anexis_server(pid)}
     pid_file(settings).unlink(missing_ok=True)
-    if pid is None:
-        return False
-    stop_process(pid)
-    return True
+    for pid in found:
+        stop_process(pid)
+    return bool(found)
 
 
 # ---- commands ---------------------------------------------------------------
@@ -88,8 +128,9 @@ def cmd_serve(settings: Settings, args) -> None:
     from anexis.server import create_app
 
     running = server_pid(settings)
-    if running and running != os.getpid():
-        sys.exit(f"  anexis is already running (pid {running}). Use anexis restart.")
+    if (running and running != os.getpid()) or asyncio.run(is_up(AnexisClient(settings.url))):
+        sys.exit("  anexis is already running. Use anexis restart.")
+    clear_port(settings)  # an older anexis on the port is stopped, anything else is explained
     settings.home.mkdir(parents=True, exist_ok=True)
     pid_file(settings).write_text(str(os.getpid()))
     app = create_app(AnexisApp(settings))

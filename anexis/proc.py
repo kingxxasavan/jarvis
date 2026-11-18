@@ -87,6 +87,26 @@ def is_anexis_server(pid: int) -> bool:
     return "serve" in words and "anexis" in words
 
 
+def port_owner(port: int) -> int | None:
+    """The pid of the program listening on this TCP port, or None when nothing
+    is (or when it belongs to another user and cannot be seen)."""
+    try:
+        conns = psutil.net_connections(kind="tcp")
+    except (psutil.Error, OSError):
+        return None
+    for conn in conns:
+        if conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.port == port and conn.pid:
+            return conn.pid
+    return None
+
+
+def describe(pid: int) -> str:
+    try:
+        return " ".join(psutil.Process(pid).cmdline())[:120] or psutil.Process(pid).name()
+    except psutil.Error:
+        return "a program"
+
+
 async def run_process(
     argv: list[str] | str, cwd, timeout: float, env: dict | None = None, stdin: bytes | None = None
 ) -> tuple[int | None, str]:
