@@ -74,5 +74,12 @@ class AnexisClient:
     async def tools(self) -> dict:
         return (await self._call("GET", "/tools")).json()
 
+    async def models(self) -> list[dict]:
+        return (await self._call("GET", "/models", timeout=30)).json()
+
+    async def pick_model(self, provider: str, model: str, role: str = "chat") -> dict:
+        body = {"provider": provider, "model": model, "role": role}
+        return (await self._call("POST", "/models", timeout=120, json=body)).json()
+
     async def doctor(self) -> list[dict]:
         return (await self._call("GET", "/doctor", timeout=120)).json()

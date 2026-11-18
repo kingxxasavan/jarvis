@@ -57,8 +57,22 @@ To have it start with the server, see the top of `anexis.service`.
 | `anexis status` / `start` / `stop` / `restart` | the background server |
 
 In the chat: `/help` lists everything. The main ones are `/new`, `/chats`,
-`/open <n>`, `/memory [words]`, `/remember`, `/pin` (something always true about
-you), `/forget <n>`, `/why`, `/code <what to build>`, `/tools`, `/doctor`.
+`/open <n>`, `/model`, `/memory [words]`, `/remember`, `/pin` (something always
+true about you), `/forget <n>`, `/why`, `/code <what to build>`, `/tools`,
+`/doctor`.
+
+### Picking the model
+
+`/model` lists the models each provider really has right now, with the one in
+use marked. `/model llama` searches the list, `/model 3` switches to number 3.
+A model is tried with a one word test before the switch, so a broken pick
+changes nothing. The switch works at once and is saved in `anexis.toml` (the
+old file is kept as `anexis.toml.bak`). Add a job to switch just that one:
+`/model 3 coder` (jobs: chat, tools, coder, small, embed).
+
+Providers retire models. When the one Anexis is set to use is gone, Anexis
+swaps it for the closest model that provider still has when it starts, saves
+that, and says so at the top of the chat.
 
 When Anexis wants to do something risky (run a command, end a program, write
 outside its workspace) it asks first, right in the chat: `allow? y/N`. To let

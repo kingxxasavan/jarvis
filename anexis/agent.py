@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import platform as host_platform
+import re
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -18,6 +19,7 @@ from anexis.tools.permissions import decide
 from anexis.tools.registry import Registry
 
 MODES = ("general", "school", "work", "project")
+GONE = re.compile(r"HTTP 404|not found|does not exist|no such model|unknown model|model .* (is )?not (available|supported)", re.I)
 ABOUT_BUDGET = 3000  # characters of About Me always sent
 LESSON_BUDGET = 1500  # characters of standing instructions always sent
 
@@ -198,6 +200,8 @@ class Agent:
             raise
         except (AllProvidersFailed, ProviderError) as e:
             message = f"No model could answer right now. {e}"
+            if GONE.search(str(e)):
+                message += " The model looks gone: type /model to pick one your provider has."
             emit({"type": "error", "message": message})
             return {**result, "error": message}
 

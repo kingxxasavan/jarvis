@@ -25,6 +25,7 @@ from rich.markup import escape
 
 from anexis.agent import MODES
 from anexis.cli.client import AnexisClient
+from anexis.models import ROLES, chat_models
 
 PAD = "  "
 HELP = """
@@ -38,6 +39,9 @@ HELP = """
   /pin <text>          save something that is always true about you
   /forget <n>          delete memory number n
   /why                 the memories behind my last answer
+  /model [words]       the models your providers have now, or search them
+  /model <n or name>   switch to that model (tested first, then saved)
+  /model <n> coder     switch one job: chat, tools, coder, small or embed
   /tools               tool servers and how many tools each has
   /code <what>         build something in the workspace
   /doctor              check every part
@@ -84,6 +88,7 @@ class ChatSession:
         self.session_id: str | None = None
         self.mode: str | None = None
         self._listed: list[dict] = []
+        self._choices: list[tuple[str, str]] = []  # (provider, model) as numbered by the last /model
 
     def say(self, text: str, style: str = "dim") -> None:
         self.console.print(f"[{style}]{PAD}{escape(text)}[/{style}]", highlight=False)
@@ -154,6 +159,36 @@ class ChatSession:
             settle()
         return "".join(reply)
 
+    async def model(self, arg: str) -> None:
+        """/model lists, /model <words> searches, /model <n or exact name> [job] switches."""
+        words = arg.split()
+        role = words.pop() if len(words) > 1 and words[-1] in ROLES else "chat"
+        wanted = " ".join(words)
+        if wanted.isdigit():
+            if not 0 < int(wanted) <= len(self._choices):
+                self.say("type /model first, then /model <number from that list>")
+                return
+            await self._switch(*self._choices[int(wanted) - 1], role)
+            return
+        seen = await self.client.models()
+        exact = [(p["name"], wanted) for p in seen if wanted and wanted in p["available"]]
+        if exact:
+            await self._switch(*exact[0], role)
+            return
+        await _model_list(self, seen, [w.lower() for w in words])
+
+    async def _switch(self, provider: str, model: str, role: str) -> None:
+        waiting = self.console.status(f"[dim]trying {escape(model)}[/dim]", spinner="dots")
+        waiting.start()
+        try:
+            done = await self.client.pick_model(provider, model, role)
+        finally:
+            waiting.stop()
+        if done["ok"]:
+            self.say(f"{role} now uses {provider} {model}. saved in {done['saved']}", "green")
+        else:
+            self.say(f"! {model} did not work, nothing changed: {done['error'][:200]}", "red")
+
     def _memories(self, rows: list[dict], empty: str) -> None:
         if not rows:
             self.say(empty)
@@ -216,6 +251,8 @@ class ChatSession:
         elif name == "why":
             rows = await c.why(self.session_id) if self.session_id else []
             self._memories(rows, "no memories were used for the last answer.")
+        elif name == "model":
+            await self.model(arg)
         elif name == "tools":
             show_tools(self.console, await c.tools())
         elif name == "doctor":
@@ -228,6 +265,39 @@ class ChatSession:
         else:
             self.say(f"no command /{name}. try /help")
         return True
+
+
+LIST_MAX = 25
+
+
+async def _model_list(chat: ChatSession, seen: list[dict], words: list[str]) -> None:
+    chat._choices = []
+    if not seen:
+        chat.say("no provider is set up. Install Ollama, or put NVIDIA_API_KEY in ~/.anexis/.env and anexis restart.", "yellow")
+    for p in seen:
+        current = p["models"].get("chat", "")
+        mark = " (gone)" if current in p["missing"] else ""
+        chat.console.print(f"\n{PAD}[bold]{escape(p['name'])}[/bold]  [dim]chat =[/dim] {escape(current or 'none')}"
+                           f"[red]{mark}[/red]", highlight=False)
+        others = {r: m for r, m in p["models"].items() if r != "chat" and m}
+        if others:
+            chat.say("  " + "  ".join(f"{r}={m}{' (gone)' if m in p['missing'] else ''}" for r, m in others.items()))
+        if p["error"]:
+            chat.say(f"  not reachable: {p['error'][:150]}", "red")
+            continue
+        pool = chat_models(p["available"])
+        if words:
+            pool = [m for m in p["available"] if all(w in m.lower() for w in words)]
+        for model in pool[:LIST_MAX]:
+            chat._choices.append((p["name"], model))
+            now = "  [green]< now[/green]" if model == current else ""
+            chat.console.print(f"{PAD}[dim]{len(chat._choices):>4}[/dim]  {escape(model)}{now}", highlight=False)
+        if len(pool) > LIST_MAX:
+            chat.say(f"  ... and {len(pool) - LIST_MAX} more. /model <words> narrows it down.")
+        elif not pool:
+            chat.say("  nothing matches." if words else "  no chat models listed.")
+    if chat._choices:
+        chat.say("/model <number> switches to it")
 
 
 def show_tools(console: Console, info: dict) -> None:
@@ -282,6 +352,8 @@ async def run_chat(client: AnexisClient, home: Path) -> None:
     console.print(f"\n[bold]{escape(header(health))}[/bold]", highlight=False)
     for warning in health.get("warnings", []):
         chat.say(warning, "yellow")
+    for note in health.get("model_notes", []):
+        chat.say(note + "  (/model to pick another)", "yellow")
     for item in health.get("due", []):
         chat.say(f"due soon: {item}", "yellow")
     if health.get("tool_servers_starting"):

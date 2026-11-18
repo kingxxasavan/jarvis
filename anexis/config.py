@@ -98,6 +98,7 @@ class Settings:
 
     env: Mapping[str, str] = field(default_factory=dict, repr=False)
     notes: list[str] = field(default_factory=list)  # config problems that were worked around
+    config_file: Path | None = None  # the anexis.toml these settings came from, if any
 
     def __post_init__(self) -> None:
         self.home = Path(self.home).expanduser()
@@ -108,6 +109,11 @@ class Settings:
             self.control = "ask"
         if not self.providers:
             self.providers = [_provider(p, self.env) for p in DEFAULT_PROVIDERS]
+
+    @property
+    def settings_file(self) -> Path:
+        """Where a change made from the chat (like /model) is saved."""
+        return self.config_file or self.home / "anexis.toml"
 
     @property
     def host(self) -> str:
@@ -172,7 +178,7 @@ def find_config(home: Path) -> Path | None:
 
 _UNSET = object()
 _SECTIONS = ("memory", "agent", "coder", "llm", "tools", "server")
-_NOT_FROM_FILE = {"home", "env", "notes", "providers", "permissions"}
+_NOT_FROM_FILE = {"home", "env", "notes", "providers", "permissions", "config_file"}
 
 
 def load_settings(env: Mapping[str, str] | None = None, config_path=_UNSET) -> Settings:
@@ -238,4 +244,5 @@ def load_settings(env: Mapping[str, str] | None = None, config_path=_UNSET) -> S
             notes.append(f"{key} must be a whole number, not {clean[key]!r}. Using the default.")
             del clean[key]
 
-    return Settings(home=home, env=merged, notes=notes, **({"providers": providers} if providers else {}), **clean)
+    return Settings(home=home, env=merged, notes=notes, config_file=Path(config_path) if config_path else None,
+                    **({"providers": providers} if providers else {}), **clean)

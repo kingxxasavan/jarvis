@@ -22,6 +22,7 @@ from anexis.events import EventBus
 from anexis.llm import Router
 from anexis.memory.learn import Learner, consolidate
 from anexis.memory.store import Memory
+from anexis.models import heal
 from anexis.tools import canvas, register_builtin
 from anexis.tools.code import ClaudeRunner, OwnCoder, make_code_tool
 from anexis.tools.mcp import MCPManager
@@ -45,8 +46,17 @@ class AnexisApp:
         self.learner = Learner(self.memory, self.router)
         self.agent = Agent(settings, self.memory, self.router, self.registry, self.learner, self.events)
         self._tasks: list[asyncio.Task] = []
+        self.model_notes: list[str] = []  # models swapped because the provider dropped them
 
     async def start(self) -> None:
+        # A model the provider retired would fail every reply, so swap it first.
+        if getattr(self.router, "providers", None):
+            try:
+                self.model_notes = await asyncio.wait_for(heal(self.settings, self.router), 20)
+            except Exception as e:  # unreachable provider, slow network: carry on as configured
+                self.memory.log("model_heal_failed", {"error": f"{type(e).__name__}: {e}"[:300]})
+            for note in self.model_notes:
+                self.memory.log("model_swapped", {"note": note})
         # Tool servers can take a while the first time (they download), so the
         # server answers right away and tools join as they come up.
         self._tasks.append(asyncio.create_task(self._start_tools()))
