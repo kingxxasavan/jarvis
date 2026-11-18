@@ -1,0 +1,58 @@
+# Anexis settings. Everything here is optional: delete a line to get the default.
+# A mistake in this file never stops Anexis, `anexis doctor` just points it out.
+# Keys never go here, they go in ~/.anexis/.env.
+# After a change: anexis restart
+
+name = "Anexis"
+# workspace = "~/anexis/workspace"   # where files and projects Anexis makes live
+
+[server]
+port = 8765   # it only ever listens on this machine (127.0.0.1). Reach it over SSH.
+
+# Models are tried top to bottom. If one is down Anexis moves to the next.
+# A provider with api_key_env is skipped quietly until that key is in .env.
+# Jobs: chat (talking and tools), tools (a quick model just for picking tools),
+# coder (code tasks), small (memory and summaries), embed (meaning search).
+# Only chat is needed. The others fall back to chat, embed just turns off.
+[[providers]]
+name = "ollama"
+base_url = "http://localhost:11434/v1"
+[providers.models]
+chat = "qwen3:8b"
+coder = "qwen2.5-coder:7b"
+small = "qwen3:4b"
+embed = "nomic-embed-text"
+
+[[providers]]
+name = "nvidia"
+base_url = "https://integrate.api.nvidia.com/v1"
+api_key_env = "NVIDIA_API_KEY"
+embed_input_type = true
+[providers.models]
+chat = "meta/llama-3.3-70b-instruct"
+embed = "nvidia/nv-embedqa-e5-v5"
+
+[memory]
+recall_k = 8              # memories pulled into each reply
+history_messages = 24     # how much of the chat the model sees
+history_chars = 24000     # and its size limit. Lower it for small models.
+learn = true              # learn from every exchange
+consolidate_minutes = 60  # how often the memory upkeep runs
+
+[agent]
+max_steps = 8             # tool rounds per reply
+max_tools = 12            # tools offered to the model per turn
+control = "ask"           # "ask": risky tools wait for your yes. "full": everything just runs.
+
+[coder]
+claude_bin = "claude"     # used when it is installed and signed in, else Anexis codes itself
+# claude_model = "sonnet"
+claude_backoff_minutes = 30
+fallback_rounds = 12
+
+[tools]
+outside_tools = true      # start the tool servers in tools.yaml
+
+# Loosen or tighten single tools: "allow" runs without asking, "ask" always asks.
+[permissions]
+# run_shell = "allow"
