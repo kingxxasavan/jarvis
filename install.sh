@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Installs Anexis on a Linux server. No questions, no keys needed.
 #
-#   bash install.sh             install or update, then run the checkup
+#   bash install.sh             install or update, set up Ollama, run the checkup
 #   bash install.sh --no-node   skip installing Node (npm tool servers stay off)
+#   bash install.sh --no-ollama leave the model settings alone (for a hosted model)
 #
 # Safe to run again: it only does what is still missing.
 set -euo pipefail
@@ -11,9 +12,11 @@ cd "$(dirname "$0")"
 LOCAL_BIN="$HOME/.local/bin"
 NODE_DIR="$HOME/.local/share/anexis/node"
 WANT_NODE=1
+WANT_OLLAMA=1
 for arg in "$@"; do
   case "$arg" in
     --no-node) WANT_NODE=0 ;;
+    --no-ollama) WANT_OLLAMA=0 ;;
     *) echo "unknown option: $arg"; exit 2 ;;
   esac
 done
@@ -81,7 +84,21 @@ if [ ! -f "$HOME/.anexis/.env" ]; then
 fi
 ok "settings in ~/.anexis (anexis.toml and .env)"
 
-# 5. Restart a running copy so it picks up the new code, then check everything.
+# 5. Ollama, the model on this server: an MoE model that fits its memory,
+#    built into "anexis" with a big context window (see anexis/ollama.py).
+"$LOCAL_BIN/anexis" stop >/dev/null 2>&1 || true
+if [ "$WANT_OLLAMA" = 1 ]; then
+  if ! have ollama; then
+    echo "  installing ollama"
+    curl -fsSL https://ollama.com/install.sh | sh || warn "ollama did not install. Later: curl -fsSL https://ollama.com/install.sh | sh"
+  fi
+  if have ollama; then
+    echo "  setting up the model (the first time downloads several GB)"
+    if "$LOCAL_BIN/anexis" ollama; then ok "ollama model ready"; else warn "the ollama model is not set up. Later: anexis ollama"; fi
+  fi
+fi
+
+# 6. Restart a running copy so it picks up the new code, then check everything.
 "$LOCAL_BIN/anexis" stop >/dev/null 2>&1 || true
 echo
 echo "  checkup (the first run downloads the tool servers, give it a minute)"

@@ -29,12 +29,22 @@ It installs uv (which brings its own Python), the `anexis` command, and Node for
 the npm tool servers if the server has none. Then it runs the checkup. It asks
 nothing and needs no keys. Run it again any time to update.
 
-Anexis needs one model to talk with. Either:
+It also sets up the model, on the server itself with Ollama: no key, nothing to
+sign up for. It installs Ollama if it is missing, then runs `anexis ollama`,
+which:
 
-* **Ollama on the server** (nothing to sign up for): install it from
-  ollama.com, then `ollama pull qwen3:8b` and `ollama pull nomic-embed-text`.
-* **A hosted model**: put `NVIDIA_API_KEY=...` in `~/.anexis/.env` (free at
-  build.nvidia.com), then `anexis restart`.
+1. picks a model that fits the server's memory: `gpt-oss:20b`, a mixture of
+   experts (MoE) model, with 16 GB or more, else `qwen3:4b`,
+2. pulls it and `nomic-embed-text` (for meaning search in memory),
+3. builds a local model called `anexis` from it with a 16k token window.
+   Ollama's default window is about 4096 tokens and its OpenAI style API
+   ignores a bigger one asked for per request, so without this Ollama
+   silently cuts off Anexis's instructions and tools,
+4. points `~/.anexis/anexis.toml` at it and restarts Anexis.
+
+Run `anexis ollama` again any time, or name a model: `anexis ollama qwen3:30b-a3b`.
+For a hosted model instead, run `bash install.sh --no-ollama`, put
+`NVIDIA_API_KEY=...` in `~/.anexis/.env`, and pick its model with `/model`.
 
 ## Use it
 
@@ -54,11 +64,26 @@ To have it start with the server, see the top of `anexis.service`.
 | `anexis doctor` | checks every part and says how to fix what is missing |
 | `anexis tools` | every tool and tool server |
 | `anexis watch` | what Anexis is doing, live, from a second terminal |
+| `anexis ollama [model]` | use Ollama on the server, set up in one go |
 | `anexis status` / `start` / `stop` / `restart` | the background server |
 
 In the chat: `/help` lists everything. The main ones are `/new`, `/chats`,
-`/open <n>`, `/memory [words]`, `/remember`, `/pin` (something always true about
-you), `/forget <n>`, `/why`, `/code <what to build>`, `/tools`, `/doctor`.
+`/open <n>`, `/model`, `/memory [words]`, `/remember`, `/pin` (something always
+true about you), `/forget <n>`, `/why`, `/code <what to build>`, `/tools`,
+`/doctor`.
+
+### Picking the model
+
+`/model` lists the models each provider really has right now, with the one in
+use marked. `/model llama` searches the list, `/model 3` switches to number 3.
+A model is tried with a one word test before the switch, so a broken pick
+changes nothing. The switch works at once and is saved in `anexis.toml` (the
+old file is kept as `anexis.toml.bak`). Add a job to switch just that one:
+`/model 3 coder` (jobs: chat, tools, coder, small, embed).
+
+Providers retire models. When the one Anexis is set to use is gone, Anexis
+swaps it for the closest model that provider still has when it starts, saves
+that, and says so at the top of the chat.
 
 When Anexis wants to do something risky (run a command, end a program, write
 outside its workspace) it asks first, right in the chat: `allow? y/N`. To let

@@ -38,11 +38,13 @@ async def doctor(anexis) -> list[dict]:
     for provider in await anexis.router.status():
         name = f"model: {provider['name']}"
         if not provider["ok"]:
-            fix = "install and start Ollama (ollama serve)" if provider["name"] == "ollama" else "check the API key and the network"
+            fix = "install Ollama (curl -fsSL https://ollama.com/install.sh | sh), then anexis ollama" if provider["name"] == "ollama" else "check the API key and the network"
             out.append(check(name, False, provider.get("error", "not reachable")[:200], fix, optional=len(getattr(anexis.router, "providers", [])) > 1))
         elif provider["missing"]:
-            pull = " && ".join(f"ollama pull {m}" for m in provider["missing"])
-            fix = pull if provider["name"] == "ollama" else "these were retired or renamed, pick current ones in anexis.toml"
+            pull = " && ".join(f"ollama pull {m}" for m in provider["missing"] if m != "anexis")
+            if "anexis" in provider["missing"]:
+                pull = "anexis ollama" + (f" && {pull}" if pull else "")
+            fix = pull if provider["name"] == "ollama" else "these were retired or renamed, pick others with /model in the chat"
             out.append(check(name, False, "missing models: " + ", ".join(provider["missing"]), fix))
         else:
             out.append(check(name, True, ", ".join(f"{r}={m}" for r, m in provider["models"].items()) or "reachable"))

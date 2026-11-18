@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
+from anexis import models
 from anexis.agent import MODES
 from anexis.doctor import doctor
 from anexis.memory.store import KINDS
@@ -69,6 +70,7 @@ def create_app(anexis) -> FastAPI:
         status = anexis.mcp.status
         return {
             "name": settings.name,
+            "edition": "server",  # how the chat tells this apart from an older Anexis on the same port
             "memories": anexis.memory.count(),
             "tools": len(anexis.registry),
             "control": settings.control,
@@ -79,6 +81,7 @@ def create_app(anexis) -> FastAPI:
             "chat_models": {p.name: p.cfg.models.get("chat", "") for p in getattr(anexis.router, "providers", [])},
             "due": [f"{i['title']} (due {i['due_at']})" for i in due_soon(anexis.memory, days=2)],
             "warnings": settings.warnings(),
+            "model_notes": anexis.model_notes,
         }
 
     @app.post("/chat")
@@ -236,6 +239,31 @@ def create_app(anexis) -> FastAPI:
             "tools": [{"name": t.name, "source": t.source, "tier": t.tier, "about": t.description[:100]}
                       for t in anexis.registry.all()],
         }
+
+    @app.get("/models")
+    async def models_list():
+        """Every provider in use, with the models it really has right now."""
+        return await models.survey(anexis.router)
+
+    @app.post("/models")
+    async def models_pick(body: dict):
+        """Switches a job to a model, after a one word test, and saves it."""
+        name, model = str(body.get("provider", "")), str(body.get("model", "")).strip()
+        role = body.get("role") if body.get("role") in models.ROLES else "chat"
+        provider = next((p for p in anexis.router.providers if p.name == name), None)
+        if provider is None or not model or len(model) > 200 or any(c in model for c in "\n\r\"'"):
+            raise HTTPException(400, "Pick a provider and a model from /model")
+        problem = await models.try_model(provider, model, role)
+        if problem:
+            return {"ok": False, "error": problem}
+        models.use(settings, anexis.router, name, role, model, first=role == "chat")
+        anexis.model_notes = []
+        try:
+            models.save(settings)
+            saved = str(settings.settings_file)
+        except (OSError, ValueError) as e:
+            saved = f"not saved ({e}), it lasts until the next restart"
+        return {"ok": True, "provider": name, "model": model, "role": role, "saved": saved}
 
     @app.get("/doctor")
     async def doctor_report():
