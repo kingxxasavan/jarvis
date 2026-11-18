@@ -14,13 +14,14 @@ port = 8765   # it only ever listens on this machine (127.0.0.1). Reach it over 
 # Jobs: chat (talking and tools), tools (a quick model just for picking tools),
 # coder (code tasks), small (memory and summaries), embed (meaning search).
 # Only chat is needed. The others fall back to chat, embed just turns off.
+# `anexis ollama` sets this up: it pulls an MoE model that fits the server
+# (gpt-oss:20b with 16 GB or more) and builds "anexis" from it with a big
+# context window. Or pick any model with /model in the chat.
 [[providers]]
 name = "ollama"
 base_url = "http://localhost:11434/v1"
 [providers.models]
-chat = "qwen3:8b"
-coder = "qwen2.5-coder:7b"
-small = "qwen3:4b"
+chat = "anexis"
 embed = "nomic-embed-text"
 
 [[providers]]

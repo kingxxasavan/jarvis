@@ -111,6 +111,9 @@ async def heal(settings, router) -> list[str]:
         for role, model in list(seen["models"].items()):
             if model not in seen["missing"]:
                 continue
+            if seen["name"] == "ollama" and model == "anexis":
+                notes.append("ollama: the anexis model is not built yet. Run: anexis ollama")
+                continue
             pick = suggest(seen["available"], role)
             if role == "chat" and not pick:
                 notes.append(f"{seen['name']}: {model} is gone and nothing close was found. Pick one with /model.")

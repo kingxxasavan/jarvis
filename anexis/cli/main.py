@@ -5,6 +5,7 @@
     anexis doctor          check every part
     anexis tools           list every tool
     anexis watch           what Anexis is doing, live, from another terminal
+    anexis ollama [model]  use Ollama on this server, set up in one go
     anexis start | stop | restart | status
     anexis serve           run the server in this terminal (what systemd runs)
 """
@@ -216,6 +217,16 @@ async def cmd_restart(settings: Settings, args) -> None:
     console.print("  restarted.")
 
 
+async def cmd_ollama(settings: Settings, args) -> None:
+    from anexis.ollama import setup
+
+    if not await setup(settings, args.model, lambda line: console.print(line, markup=False, highlight=False)):
+        sys.exit(1)
+    stop_server(settings)  # the next start reads the new settings
+    await start_server(settings)
+    await cmd_status(settings, args)
+
+
 COMMANDS = {
     "chat": (cmd_chat, "talk to Anexis (the default)"),
     "ask": (cmd_ask, "one question, one answer"),
@@ -226,6 +237,7 @@ COMMANDS = {
     "stop": (cmd_stop, "stop the server"),
     "restart": (cmd_restart, "stop, then start again (after editing .env or anexis.toml)"),
     "status": (cmd_status, "is it running, on which model"),
+    "ollama": (cmd_ollama, "use Ollama on this server (pulls a model that fits, sets it up)"),
     "serve": (cmd_serve, "run the server in this terminal (for systemd)"),
 }
 
@@ -237,6 +249,8 @@ def main(argv: list[str] | None = None) -> None:
         p = sub.add_parser(name, help=about)
         if name == "ask":
             p.add_argument("text", nargs="+")
+        if name == "ollama":
+            p.add_argument("model", nargs="?", help="an Ollama model, like gpt-oss:20b. Empty picks one for this server")
     args = parser.parse_args(argv)
     settings = load_settings()
     run, _ = COMMANDS[args.command or "chat"]

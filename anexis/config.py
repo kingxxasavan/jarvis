@@ -26,12 +26,9 @@ DEFAULT_PROVIDERS = [
     {
         "name": "ollama",
         "base_url": "http://localhost:11434/v1",
-        "models": {
-            "chat": "qwen3:8b",
-            "coder": "qwen2.5-coder:7b",
-            "small": "qwen3:4b",
-            "embed": "nomic-embed-text",
-        },
+        # "anexis" is built by `anexis ollama`: an MoE model with a big context
+        # window. One model does every job, so nothing swaps in and out of memory.
+        "models": {"chat": "anexis", "embed": "nomic-embed-text"},
     },
     {
         "name": "nvidia",
