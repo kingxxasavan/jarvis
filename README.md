@@ -43,8 +43,23 @@ which:
 4. points `~/.anexis/anexis.toml` at it and restarts Anexis.
 
 Run `anexis ollama` again any time, or name a model: `anexis ollama qwen3:30b-a3b`.
-For a hosted model instead, run `bash install.sh --no-ollama`, put
-`NVIDIA_API_KEY=...` in `~/.anexis/.env`, and pick its model with `/model`.
+
+### Ollama cloud, with your API key
+
+No download, and the server's memory does not matter: Ollama runs the model.
+
+```bash
+anexis ollama cloud                  # gpt-oss:120b, a big MoE model
+anexis ollama cloud qwen3-coder:480b # or name one
+```
+
+It asks for your Ollama API key (make one at ollama.com/settings/keys) with
+hidden typing, tries the model with it, and only then saves the key in
+`~/.anexis/.env` (readable only by you) and points `anexis.toml` at Ollama
+cloud. A key that is refused changes nothing. Never paste a key into a chat.
+
+For Nvidia's hosted models instead, put `NVIDIA_API_KEY=...` in
+`~/.anexis/.env`, `anexis restart`, and pick its model with `/model`.
 
 ## Use it
 
@@ -65,6 +80,7 @@ To have it start with the server, see the top of `anexis.service`.
 | `anexis tools` | every tool and tool server |
 | `anexis watch` | what Anexis is doing, live, from a second terminal |
 | `anexis ollama [model]` | use Ollama on the server, set up in one go |
+| `anexis ollama cloud [model]` | use Ollama's hosted models with your API key |
 | `anexis status` / `start` / `stop` / `restart` | the background server |
 
 In the chat: `/help` lists everything. The main ones are `/new`, `/chats`,

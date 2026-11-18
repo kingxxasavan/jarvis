@@ -6,6 +6,7 @@
     anexis tools           list every tool
     anexis watch           what Anexis is doing, live, from another terminal
     anexis ollama [model]  use Ollama on this server, set up in one go
+    anexis ollama cloud    use Ollama's hosted models with your Ollama API key
     anexis start | stop | restart | status
     anexis serve           run the server in this terminal (what systemd runs)
 """
@@ -218,9 +219,20 @@ async def cmd_restart(settings: Settings, args) -> None:
 
 
 async def cmd_ollama(settings: Settings, args) -> None:
-    from anexis.ollama import setup
+    from anexis.ollama import setup, setup_cloud
 
-    if not await setup(settings, args.model, lambda line: console.print(line, markup=False, highlight=False)):
+    def say(line: str) -> None:
+        console.print(line, markup=False, highlight=False)
+
+    what = list(args.model or [])
+    if what[:1] == ["cloud"]:
+        import getpass
+
+        ask = getpass.getpass if sys.stdin.isatty() else None
+        done = await setup_cloud(settings, what[1] if len(what) > 1 else None, say, ask)
+    else:
+        done = await setup(settings, what[0] if what else None, say)
+    if not done:
         sys.exit(1)
     stop_server(settings)  # the next start reads the new settings
     await start_server(settings)
@@ -237,7 +249,7 @@ COMMANDS = {
     "stop": (cmd_stop, "stop the server"),
     "restart": (cmd_restart, "stop, then start again (after editing .env or anexis.toml)"),
     "status": (cmd_status, "is it running, on which model"),
-    "ollama": (cmd_ollama, "use Ollama on this server (pulls a model that fits, sets it up)"),
+    "ollama": (cmd_ollama, "use Ollama: on this server, or `anexis ollama cloud` with your API key"),
     "serve": (cmd_serve, "run the server in this terminal (for systemd)"),
 }
 
@@ -250,7 +262,7 @@ def main(argv: list[str] | None = None) -> None:
         if name == "ask":
             p.add_argument("text", nargs="+")
         if name == "ollama":
-            p.add_argument("model", nargs="?", help="an Ollama model, like gpt-oss:20b. Empty picks one for this server")
+            p.add_argument("model", nargs="*", help="a model like gpt-oss:20b (empty picks one for this server), or: cloud [model]")
     args = parser.parse_args(argv)
     settings = load_settings()
     run, _ = COMMANDS[args.command or "chat"]

@@ -2,6 +2,9 @@
 
     anexis ollama                  pick a model that fits this server's memory
     anexis ollama qwen3:30b-a3b    or name one
+    anexis ollama cloud            Ollama's hosted models with your Ollama API key,
+                                   gpt-oss:120b (a big MoE model) unless you name one.
+                                   Nothing is downloaded and the server's memory does not matter.
 
 It starts Ollama if it is not running, pulls the model and the small embedding
 model, and builds a local model called "anexis" from it with a big context
@@ -14,6 +17,7 @@ pointed at it (the old file is kept as anexis.toml.bak).
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import subprocess
 
@@ -30,6 +34,11 @@ CONTEXT = 16384                  # tokens: instructions, tools, memories and the
 MOE = "gpt-oss:20b"              # mixture of experts: big model knowledge, only ~3.6B weights work per token
 MOE_MIN_GB = 15                  # it needs about 14 GB of memory
 SMALL = "qwen3:4b"               # for servers with less memory than that
+
+CLOUD_URL = "https://ollama.com/v1"
+CLOUD_KEY = "OLLAMA_API_KEY"     # made at ollama.com/settings/keys
+CLOUD_MODEL = "gpt-oss:120b"     # mixture of experts, strong at tools
+_transport = None                # tests stand in for ollama.com here
 
 
 def memory_gb() -> float:
@@ -107,4 +116,54 @@ async def setup(settings, model: str | None, say=print) -> bool:
     point_at_ollama(settings)
     save(settings)
     say(f"  done. anexis now talks with {model} on Ollama ({CONTEXT} token window), saved in {settings.settings_file}")
+    return True
+
+
+# ---- Ollama cloud: the hosted models, with an API key -----------------------
+
+def save_key(home, name: str, value: str) -> None:
+    """Puts NAME=value in ~/.anexis/.env (replacing an old one), readable only by you."""
+    path = home / ".env"
+    lines = [line for line in (path.read_text().splitlines() if path.is_file() else [])
+             if not line.strip().removeprefix("export ").startswith(f"{name}=")]
+    lines.append(f"{name}={value}")
+    home.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+    path.chmod(0o600)
+
+
+async def setup_cloud(settings, model: str | None, say=print, ask=None) -> bool:
+    """Points Anexis at Ollama's hosted models. `ask` reads the key with hidden
+    typing when it is not in ~/.anexis/.env yet."""
+    from anexis.llm import OpenAIProvider
+    from anexis.models import save, try_model
+
+    model = model or CLOUD_MODEL
+    key, typed = settings.env.get(CLOUD_KEY, "").strip(), False
+    if not key and ask:
+        key, typed = ask("  your Ollama API key (from ollama.com/settings/keys, hidden while typing): ").strip(), True
+    if not key:
+        say(f"  needs your Ollama API key. Make one at ollama.com/settings/keys, then run anexis ollama cloud"
+            f" and paste it when asked (or put {CLOUD_KEY}=... in ~/.anexis/.env).")
+        return False
+
+    cloud = Provider("ollama-cloud", CLOUD_URL, CLOUD_KEY, key, {"chat": model})
+    client = OpenAIProvider(cloud, timeout=120, transport=_transport)
+    say(f"  trying {model} on Ollama cloud...")
+    try:
+        problem = await try_model(client, model)
+    finally:
+        await client.close()
+    if problem:
+        refused = re.search(r"HTTP 40[13]\b", problem)  # ollama.com said no, not a proxy or the network
+        hint = " The key was refused, check it at ollama.com/settings/keys." if refused else " Check the server's network."
+        say(f"  {model} did not answer: {problem[:200]}.{hint} Nothing was changed.")
+        return False
+
+    if typed:
+        save_key(settings.home, CLOUD_KEY, key)
+    settings.providers[:] = [cloud]
+    save(settings)
+    say(f"  done. anexis now talks with {model} on Ollama cloud, saved in {settings.settings_file}"
+        f" (the key is in ~/.anexis/.env, not in that file)")
     return True

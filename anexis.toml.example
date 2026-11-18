@@ -33,6 +33,15 @@ embed_input_type = true
 chat = "meta/llama-3.3-70b-instruct"
 embed = "nvidia/nv-embedqa-e5-v5"
 
+# Ollama's hosted models with your Ollama API key. `anexis ollama cloud` sets
+# this up and moves it to the top.
+[[providers]]
+name = "ollama-cloud"
+base_url = "https://ollama.com/v1"
+api_key_env = "OLLAMA_API_KEY"
+[providers.models]
+chat = "gpt-oss:120b"
+
 [memory]
 recall_k = 8              # memories pulled into each reply
 history_messages = 24     # how much of the chat the model sees

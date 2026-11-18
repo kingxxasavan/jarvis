@@ -40,6 +40,13 @@ DEFAULT_PROVIDERS = [
             "embed": "nvidia/nv-embedqa-e5-v5",
         },
     },
+    {
+        # Ollama's hosted models. `anexis ollama cloud` sets this up with your key.
+        "name": "ollama-cloud",
+        "base_url": "https://ollama.com/v1",
+        "api_key_env": "OLLAMA_API_KEY",
+        "models": {"chat": "gpt-oss:120b"},
+    },
 ]
 
 
